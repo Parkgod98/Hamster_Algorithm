@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 jobs:
   validate:
@@ -28,6 +30,5 @@ jobs:
           GITHUB_APP_SLUG: hamster-algorithm
           GITHUB_APP_PRIVATE_KEY: build-placeholder
           GITHUB_WEBHOOK_SECRET: build-placeholder
-          CRON_SECRET: build-placeholder
           NEXT_PUBLIC_APP_URL: http://localhost:3000
       - run: npm test
