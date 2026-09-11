@@ -4,11 +4,12 @@ import { createAdminClient, requireUser } from "@/lib/supabase";
 import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
 import { submissionCredit } from "@/lib/rules";
 import { dateRange, evaluateTimeline } from "@/lib/progress";
+import type { Platform } from "@/lib/types";
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 
 type ProblemRow = {
-  platform: string;
+  platform: Platform;
   external_id: string;
   title: string;
   difficulty: string;
