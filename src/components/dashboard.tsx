@@ -130,9 +130,26 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
   }
 
   useEffect(() => {
-    void reload();
-    // 최초 인증 상태와 서버의 현재 Study Day를 기준으로 월을 결정합니다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    async function initialLoad() {
+      const access = await accessToken();
+      if (!access) {
+        window.location.replace("/");
+        return;
+      }
+      const response = await fetch("/api/dashboard", { headers: { Authorization: `Bearer ${access}` } });
+      const payload = await response.json() as DashboardData & { error?: string };
+      if (cancelled) return;
+      if (!response.ok) {
+        setError(payload.error ?? "조회 실패");
+        return;
+      }
+      setData(payload);
+      setMonth(payload.month);
+      setSelectedDate(payload.studyDate.startsWith(payload.month) ? payload.studyDate : `${payload.month}-01`);
+    }
+    void initialLoad();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -228,6 +245,12 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
     setDetailOpen(true);
   }
 
+  async function openDate(date: string, currentMonth: boolean) {
+    if (!currentMonth) await reload(date.slice(0, 7));
+    setSelectedDate(date);
+    setDetailOpen(true);
+  }
+
   const dayByDate = useMemo(() => new Map((data?.days ?? []).map((day) => [day.date, day])), [data]);
   const slots = useMemo(() => (month ? calendarSlots(month) : []), [month]);
   const selectedDay = selectedDate ? dayByDate.get(selectedDate) : undefined;
@@ -274,13 +297,7 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
           return <button
             key={slot.date}
             className={`calendar-day${slot.currentMonth ? "" : " is-adjacent"}${isToday ? " is-today" : ""}${isSelected ? " is-selected" : ""}`}
-            onClick={() => {
-              if (!slot.currentMonth) {
-                void reload(slot.date.slice(0, 7));
-              }
-              setSelectedDate(slot.date);
-              setDetailOpen(true);
-            }}
+            onClick={() => void openDate(slot.date, slot.currentMonth)}
             aria-pressed={isSelected}
             aria-label={`${slot.date} 인증 상세`}
           >
