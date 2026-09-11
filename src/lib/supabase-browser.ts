@@ -9,6 +9,7 @@ export function browserSupabase() {
   client ??= createClient(url, key, {
     auth: {
       flowType: "pkce",
+      detectSessionInUrl: false,
     },
   });
   return client;
