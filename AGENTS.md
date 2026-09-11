@@ -21,6 +21,8 @@
 ## 개발 원칙
 - Next.js App Router + TypeScript를 사용합니다.
 - 기본은 Server Component이며 브라우저 상호작용이 필요한 경우에만 Client Component를 사용합니다.
+- Hamster Algorithm은 MyScheduler와 같은 Supabase project를 공유하므로 앱 소유 DB object는 반드시 `hamster_` prefix를 사용합니다.
+- DB table 이름은 `src/lib/db.ts`를 단일 진입점으로 사용하며 API 코드에서 물리 테이블 이름을 임의로 하드코딩하지 않습니다.
 - DB 변경은 `supabase/migrations/`에 새 migration으로 추가하고 적용된 migration을 수정하지 않습니다.
 - GitHub 이벤트 파싱과 규칙 판정은 `src/lib/`의 순수 함수에 최대한 모읍니다.
 - 외부 서비스 실패가 풀이 이력을 조용히 유실시키지 않도록 webhook 원본 delivery를 먼저 기록합니다.
