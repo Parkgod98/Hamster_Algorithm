@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "validate": "node scripts/validate-project.mjs",
     "validate:git": "node scripts/validate-git-conventions.mjs",
+    "validate:supabase": "node scripts/validate-supabase-isolation.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

@@ -42,6 +42,14 @@ PWA Dashboard
 - 모바일 우선 PWA Dashboard
 - SWEA / CodeTree / Chrome Extension을 붙일 수 있는 manual ingestion API
 
+## Supabase 운영 방식
+
+Free plan 프로젝트 한도를 추가로 사용하지 않기 위해 **MyScheduler의 기존 Supabase project를 공유**합니다.
+
+Hamster 소유 DB object는 전부 `hamster_` prefix로 분리되어 MyScheduler의 기존 table/function/policy와 이름이 충돌하지 않도록 구성했습니다. API에서는 물리 테이블 이름을 `src/lib/db.ts`에서 관리합니다.
+
+`auth.users`는 같은 Supabase Auth tenant를 공유하지만 Hamster와 MyScheduler는 서로 다른 웹 origin에서 세션을 사용합니다. 자세한 적용 순서는 `docs/setup-supabase.md`를 참고하세요.
+
 ## 기본 스터디 규칙
 
 | 플랫폼 | 난이도 | 하루 인정량 |
