@@ -1,0 +1,5 @@
+"use client";
+import { useEffect,useState } from "react";
+import { useParams } from "next/navigation";
+import { browserSupabase } from "@/lib/supabase-browser";
+export default function JoinPage(){const {code}=useParams<{code:string}>();const [message,setMessage]=useState("초대 확인 중…");useEffect(()=>{void(async()=>{const supabase=browserSupabase();const {data}=await supabase.auth.getSession();if(!data.session){localStorage.setItem("hamster-next",`/join/${code}`);setMessage("스터디에 참여하려면 GitHub 로그인이 필요합니다.");return;}const r=await fetch("/api/studies/join",{method:"POST",headers:{Authorization:`Bearer ${data.session.access_token}`,"Content-Type":"application/json"},body:JSON.stringify({code})});if(r.ok)location.replace("/dashboard");else{const j=await r.json();setMessage(j.error??"참여 실패");}})()},[code]);async function login(){localStorage.setItem("hamster-next",`/join/${code}`);await browserSupabase().auth.signInWithOAuth({provider:"github",options:{redirectTo:`${location.origin}/auth/callback`}})}return <main className="shell"><section className="card"><h1>{message}</h1><button className="button" onClick={login}>GitHub 로그인</button></section></main>}
