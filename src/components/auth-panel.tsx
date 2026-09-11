@@ -35,7 +35,7 @@ export function AuthPanel() {
       <button className="button" onClick={login} disabled={loading}>
         {loading ? "GitHub로 이동 중…" : "GitHub로 시작하기"}
       </button>
-      {message ? <p>{message}</p> : null}
+      <div aria-live="polite">{message ? <p>{message}</p> : null}</div>
     </div>
   );
 }
