@@ -3,6 +3,7 @@
 ## Runtime
 - UI: Next.js App Router + React + TypeScript
 - Auth / DB: Supabase Auth + PostgreSQL + RLS
+- Supabase deployment: MyScheduler와 기존 Supabase project를 공유하되 Hamster 소유 object는 `hamster_` prefix로 격리
 - Repository ingestion: GitHub App + push webhook
 - Installability: Web App Manifest 기반 PWA
 - Optional manual ingestion: 인증된 API endpoint. 향후 Chrome Extension/SWEA/CodeTree adapter가 사용
@@ -34,13 +35,23 @@
     PWA Dashboard
 ```
 
+## Shared Supabase isolation
+Free plan의 별도 project를 추가하지 않고 MyScheduler의 Supabase project를 공유합니다.
+
+- `auth.users`만 Supabase Auth tenant 수준에서 공유합니다.
+- Hamster가 소유하는 table/function/policy는 모두 `hamster_` prefix를 사용합니다.
+- API의 물리 테이블 이름은 `src/lib/db.ts`에서 관리합니다.
+- MyScheduler의 기존 table, function, policy 이름을 재사용하거나 변경하지 않습니다.
+- `hamster_github_installations`, `hamster_webhook_events`는 RLS를 활성화한 뒤 authenticated policy를 두지 않아 server-only로 유지합니다.
+- service role key는 Hamster 서버 환경변수에만 두며 client bundle에 포함하지 않습니다.
+
 ## Identity model
-- `auth.users`: 로그인 Identity. Supabase GitHub OAuth를 기본 로그인으로 사용합니다.
-- `profiles`: GitHub login 등 화면용 프로필.
-- `studies`: 스터디와 공통 규칙.
-- `study_members`: User와 Study의 N:M 관계.
-- `repository_connections`: 사용자별 연결 Repository. 한 사용자가 여러 Repository를 연결할 수 있습니다.
-- `github_installations`: GitHub App 설치와 사용자 연결.
+- `auth.users`: 로그인 Identity. Supabase GitHub OAuth를 기본 로그인으로 사용합니다. MyScheduler와 같은 auth tenant를 공유합니다.
+- `hamster_profiles`: GitHub login 등 화면용 프로필.
+- `hamster_studies`: 스터디와 공통 규칙.
+- `hamster_study_members`: User와 Study의 N:M 관계.
+- `hamster_repository_connections`: 사용자별 연결 Repository. 한 사용자가 여러 Repository를 연결할 수 있습니다.
+- `hamster_github_installations`: GitHub App 설치와 사용자 연결.
 
 ## Submission model
 모든 입력 Source를 내부 `Submission`으로 정규화합니다.
@@ -99,3 +110,4 @@ DB에는 원본 `solved_at`을 timestamptz로 저장하고 Study Day는 서버�
 - GitHub App private key와 Supabase service role key는 서버 전용 환경변수입니다.
 - 사용자 API는 Supabase access token을 검증한 뒤 user id를 결정합니다.
 - webhook payload는 필요한 최소 메타데이터만 DB에 저장합니다.
+- 공유 Supabase project의 다른 앱 object에는 Hamster migration이 접근하지 않습니다.
