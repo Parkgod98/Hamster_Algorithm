@@ -1,11 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { browserSupabase } from "@/lib/supabase-browser";
 
 export function AuthPanel() {
   const [message, setMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreSession() {
+      try {
+        const { data } = await browserSupabase().auth.getSession();
+        if (cancelled) return;
+        if (data.session) {
+          window.location.replace("/dashboard");
+          return;
+        }
+      } catch {
+        // 로그인 버튼을 계속 제공한다.
+      }
+      if (!cancelled) setLoading(false);
+    }
+    void restoreSession();
+    return () => { cancelled = true; };
+  }, []);
 
   async function login() {
     setLoading(true);
@@ -33,7 +52,7 @@ export function AuthPanel() {
   return (
     <div>
       <button className="button" onClick={login} disabled={loading}>
-        {loading ? "GitHub로 이동 중…" : "GitHub로 시작하기"}
+        {loading ? "로그인 상태 확인 중…" : "GitHub로 시작하기"}
       </button>
       <div aria-live="polite">{message ? <p>{message}</p> : null}</div>
     </div>
