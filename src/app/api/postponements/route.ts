@@ -23,7 +23,8 @@ export async function POST(request: Request) {
     const current = studyDateFromTimestamp(new Date().toISOString());
     const time = seoulParts();
     if (time.hour > study.postpone_deadline_hour || (time.hour === study.postpone_deadline_hour && time.minute > study.postpone_deadline_minute)) {
-      return NextResponse.json({ error: "미루기 신청 마감(23:59)이 지났습니다." }, { status: 409 });
+      const deadline = `${String(study.postpone_deadline_hour).padStart(2, "0")}:${String(study.postpone_deadline_minute).padStart(2, "0")}`;
+      return NextResponse.json({ error: `미루기 신청 마감(${deadline})이 지났습니다.` }, { status: 409 });
     }
 
     let consecutive = 0;
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
       if (!data) break;
       consecutive += 1;
     }
-    if (consecutive >= study.max_consecutive_postpone) return NextResponse.json({ error: "연속 미루기는 최대 2회입니다." }, { status: 409 });
+    if (consecutive >= study.max_consecutive_postpone) return NextResponse.json({ error: `연속 미루기는 최대 ${study.max_consecutive_postpone}회입니다.` }, { status: 409 });
 
     const { error } = await admin.from(DB.postponements).insert({ study_id: studyId, user_id: user.id, study_date: current });
     if (error?.code === "23505") return NextResponse.json({ ok: true, duplicate: true });
