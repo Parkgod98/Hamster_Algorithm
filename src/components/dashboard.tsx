@@ -25,8 +25,30 @@ type DayMember = {
   submissions: Submission[];
 };
 type CalendarDay = { date: string; members: DayMember[] };
+type RuleConfig = {
+  bojBronzeCount: number;
+  bojSilverCount: number;
+  bojGoldCount: number;
+  programmersLowCount: number;
+  programmersHighCount: number;
+  sweaLowCount: number;
+  sweaHighCount: number;
+  codetreeSamsungCount: number;
+  penalties: { 1: number; 2: number; 3: number };
+};
+type Study = {
+  id: string;
+  name: string;
+  inviteCode: string;
+  role: "admin" | "member";
+  rules: RuleConfig;
+  postponeDeadlineHour: number;
+  postponeDeadlineMinute: number;
+  maxConsecutivePostpone: number;
+  maxPresolveDays: number;
+};
 type DashboardData = {
-  study: null | { id: string; name: string; inviteCode: string };
+  study: Study | null;
   members: Array<{ userId: string; name: string }>;
   repositories: Repo[];
   days: CalendarDay[];
@@ -34,6 +56,13 @@ type DashboardData = {
   currentUserId: string;
   studyDate: string;
   month: string;
+};
+type RulesDraft = {
+  ruleConfig: RuleConfig;
+  postponeDeadlineHour: number;
+  postponeDeadlineMinute: number;
+  maxConsecutivePostpone: number;
+  maxPresolveDays: number;
 };
 
 const STATE_META: Record<MemberState, { icon: string; label: string }> = {
@@ -81,6 +110,10 @@ function formatTime(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatDeadline(hour: number, minute: number) {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 function calendarSlots(month: string) {
   const [year, monthNumber] = month.split("-").map(Number);
   const first = new Date(Date.UTC(year, monthNumber - 1, 1));
@@ -98,6 +131,34 @@ function calendarSlots(month: string) {
   return slots;
 }
 
+function cloneRules(study: Study): RulesDraft {
+  return {
+    ruleConfig: {
+      ...study.rules,
+      penalties: { ...study.rules.penalties },
+    },
+    postponeDeadlineHour: study.postponeDeadlineHour,
+    postponeDeadlineMinute: study.postponeDeadlineMinute,
+    maxConsecutivePostpone: study.maxConsecutivePostpone,
+    maxPresolveDays: study.maxPresolveDays,
+  };
+}
+
+function NumberField({ label, value, disabled, min = 0, max = 20, suffix, onChange }: {
+  label: string;
+  value: number;
+  disabled: boolean;
+  min?: number;
+  max?: number;
+  suffix: string;
+  onChange: (value: number) => void;
+}) {
+  return <label className="rule-field">
+    <span>{label}</span>
+    <div><input type="number" min={min} max={max} value={value} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} /><em>{suffix}</em></div>
+  </label>;
+}
+
 export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState("");
@@ -106,6 +167,7 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
   const [selectedDate, setSelectedDate] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [rulesDraft, setRulesDraft] = useState<RulesDraft | null>(null);
   const [toast, setToast] = useState("");
 
   async function reload(targetMonth?: string) {
@@ -179,6 +241,11 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
     if (response.ok) await reload();
   }
 
+  function openSettings() {
+    if (data?.study) setRulesDraft(cloneRules(data.study));
+    setSettingsOpen(true);
+  }
+
   function connect() {
     if (!data?.study) return;
     if (!githubAppSlug) {
@@ -224,6 +291,28 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
     }
   }
 
+  async function saveRules() {
+    if (!data?.study || !rulesDraft || data.study.role !== "admin") return;
+    setBusy("rules");
+    const access = await accessToken();
+    const response = await fetch("/api/studies/settings", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        studyId: data.study.id,
+        ...rulesDraft,
+      }),
+    });
+    const payload = await response.json() as { error?: string };
+    setBusy("");
+    if (!response.ok) {
+      setToast(payload.error ?? "규칙을 저장하지 못했습니다.");
+      return;
+    }
+    setToast("인증 규칙을 저장했습니다.");
+    await reload(month);
+  }
+
   async function copyInvite() {
     if (!data?.study) return;
     const invite = `${window.location.origin}/join/${data.study.inviteCode}`;
@@ -260,13 +349,17 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
   if (!data) return <main className="app-shell"><div className="loading-state">햄쮸터를 불러오는 중…</div></main>;
   if (!data.study) return <main className="app-shell"><section className="onboarding"><span className="eyebrow">HAMJJUTER</span><h1>첫 알고리즘 스터디를<br />만들어보세요.</h1><p>GitHub에 올라온 풀이 기록으로 인증을 자동화합니다.</p><button className="primary-button" onClick={createStudy}>스터디 만들기</button></section></main>;
 
+  const study = data.study;
+  const editableRules = rulesDraft ?? cloneRules(study);
+  const canEditRules = study.role === "admin";
+
   return <main className="app-shell">
     <header className="app-header">
       <div className="brand-block">
         <div className="brand-mark" aria-hidden="true">🐹</div>
-        <div><p className="eyebrow">HAMJJUTER</p><h1>{data.study.name}</h1></div>
+        <div><p className="eyebrow">HAMJJUTER</p><h1>{study.name}</h1></div>
       </div>
-      <button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="스터디 설정 열기" title="스터디 설정">
+      <button className="icon-button" onClick={openSettings} aria-label="스터디 설정 열기" title="스터디 설정">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.14.37.36.7.64.98.28.28.63.49 1.01.6H21v4h-.1A1.7 1.7 0 0 0 19.4 15Z"/></svg>
       </button>
     </header>
@@ -341,23 +434,50 @@ export function Dashboard({ githubAppSlug }: { githubAppSlug: string }) {
         </div>
         {selectedDate === data.studyDate && mySelectedState?.state !== "postponed" && <div className="sheet-actions">
           <button className="primary-button full" onClick={() => void postpone()} disabled={busy === "postpone"}>{busy === "postpone" ? "처리 중…" : "오늘 미루기"}</button>
-          <p>미루기는 당일 23:59까지, 연속 최대 2회 사용할 수 있습니다.</p>
+          <p>미루기는 당일 {formatDeadline(study.postponeDeadlineHour, study.postponeDeadlineMinute)}까지, 연속 최대 {study.maxConsecutivePostpone}회 사용할 수 있습니다.</p>
         </div>}
       </aside>
     </div>}
 
     {settingsOpen && <div className="sheet-layer" onMouseDown={(event) => { if (event.currentTarget === event.target) setSettingsOpen(false); }}>
       <aside className="side-sheet settings-sheet" role="dialog" aria-modal="true" aria-label="스터디 설정">
-        <div className="sheet-header"><div><p className="eyebrow">STUDY SETTINGS</p><h2>스터디 설정</h2><p>매일 쓰지 않는 연결·초대 기능을 관리합니다.</p></div><button className="close-button" onClick={() => setSettingsOpen(false)} aria-label="설정 닫기">×</button></div>
+        <div className="sheet-header"><div><p className="eyebrow">STUDY SETTINGS</p><h2>스터디 설정</h2><p>Repository, 초대 링크, 인증 규칙을 관리합니다.</p></div><button className="close-button" onClick={() => setSettingsOpen(false)} aria-label="설정 닫기">×</button></div>
         <section className="settings-section">
           <div className="section-title"><div><h3>GitHub Repository</h3><p>BaekjoonHub가 push하는 알고리즘 저장소를 연결합니다.</p></div><button className="secondary-button" onClick={connect}>Repository 연결</button></div>
           <div className="repository-list">{data.repositories.length ? data.repositories.map((repo) => <div className="repository-row" key={repo.id}><div><strong>{repo.fullName}</strong><span>자동 인증 연결됨</span></div><button className="text-button" onClick={() => void backfill(repo)} disabled={busy === repo.id}>{busy === repo.id ? "가져오는 중…" : "과거 기록 가져오기"}</button></div>) : <div className="settings-empty">아직 연결된 Repository가 없습니다.</div>}</div>
         </section>
         <section className="settings-section">
           <div className="section-title"><div><h3>스터디 초대</h3><p>같이 인증할 사람에게 초대 링크를 공유하세요.</p></div></div>
-          <button className="copy-button" onClick={() => void copyInvite()}><span>{`${window.location.origin}/join/${data.study.inviteCode}`}</span><strong>복사</strong></button>
+          <button className="copy-button" onClick={() => void copyInvite()}><span>{`/join/${study.inviteCode}`}</span><strong>링크 복사</strong></button>
         </section>
-        <section className="settings-section rules-summary"><h3>기본 규칙</h3><div><span>하루 마감</span><strong>04:00</strong></div><div><span>미루기 마감</span><strong>23:59</strong></div><div><span>연속 미루기</span><strong>최대 2회</strong></div><div><span>미리 풀기</span><strong>최대 2일</strong></div></section>
+        <section className="settings-section rule-editor">
+          <div className="section-title"><div><h3>인증 규칙</h3><p>{canEditRules ? "변경하면 이후 캘린더 판정에 즉시 반영됩니다." : "관리자만 규칙을 변경할 수 있습니다."}</p></div><span className="fixed-cutoff">Study Day 04:00 고정</span></div>
+          <div className="rule-group"><h4>Baekjoon</h4><div className="rule-grid">
+            <NumberField label="Bronze II~I" value={editableRules.ruleConfig.bojBronzeCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, bojBronzeCount: value } })} />
+            <NumberField label="Silver V~I" value={editableRules.ruleConfig.bojSilverCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, bojSilverCount: value } })} />
+            <NumberField label="Gold 이상" value={editableRules.ruleConfig.bojGoldCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, bojGoldCount: value } })} />
+          </div></div>
+          <div className="rule-group"><h4>기타 플랫폼</h4><div className="rule-grid">
+            <NumberField label="Programmers Lv.0~1" value={editableRules.ruleConfig.programmersLowCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, programmersLowCount: value } })} />
+            <NumberField label="Programmers Lv.2+" value={editableRules.ruleConfig.programmersHighCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, programmersHighCount: value } })} />
+            <NumberField label="SWEA D2~D3" value={editableRules.ruleConfig.sweaLowCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, sweaLowCount: value } })} />
+            <NumberField label="SWEA D4+" value={editableRules.ruleConfig.sweaHighCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, sweaHighCount: value } })} />
+            <NumberField label="CodeTree 삼성 기출" value={editableRules.ruleConfig.codetreeSamsungCount} disabled={!canEditRules} min={1} suffix="문제" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, codetreeSamsungCount: value } })} />
+          </div></div>
+          <div className="rule-group"><h4>미루기 · 선풀이</h4><div className="rule-grid">
+            <NumberField label="미루기 마감 시" value={editableRules.postponeDeadlineHour} disabled={!canEditRules} min={0} max={23} suffix="시" onChange={(value) => setRulesDraft({ ...editableRules, postponeDeadlineHour: value })} />
+            <NumberField label="미루기 마감 분" value={editableRules.postponeDeadlineMinute} disabled={!canEditRules} min={0} max={59} suffix="분" onChange={(value) => setRulesDraft({ ...editableRules, postponeDeadlineMinute: value })} />
+            <NumberField label="연속 미루기" value={editableRules.maxConsecutivePostpone} disabled={!canEditRules} min={0} max={7} suffix="회" onChange={(value) => setRulesDraft({ ...editableRules, maxConsecutivePostpone: value })} />
+            <NumberField label="미리 풀기" value={editableRules.maxPresolveDays} disabled={!canEditRules} min={0} max={14} suffix="일" onChange={(value) => setRulesDraft({ ...editableRules, maxPresolveDays: value })} />
+          </div></div>
+          <div className="rule-group"><h4>미제출 벌금</h4><div className="rule-grid">
+            <NumberField label="1일 연속" value={editableRules.ruleConfig.penalties[1]} disabled={!canEditRules} max={1000000} suffix="원" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, penalties: { ...editableRules.ruleConfig.penalties, 1: value } } })} />
+            <NumberField label="2일 연속" value={editableRules.ruleConfig.penalties[2]} disabled={!canEditRules} max={1000000} suffix="원" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, penalties: { ...editableRules.ruleConfig.penalties, 2: value } } })} />
+            <NumberField label="3일 연속" value={editableRules.ruleConfig.penalties[3]} disabled={!canEditRules} max={1000000} suffix="원" onChange={(value) => setRulesDraft({ ...editableRules, ruleConfig: { ...editableRules.ruleConfig, penalties: { ...editableRules.ruleConfig.penalties, 3: value } } })} />
+          </div></div>
+          {canEditRules && <button className="primary-button full rules-save" onClick={() => void saveRules()} disabled={busy === "rules"}>{busy === "rules" ? "저장 중…" : "인증 규칙 저장"}</button>}
+          <p className="rule-warning">규칙 변경은 현재 판정부터 적용됩니다. 이미 확정된 과거 벌금 기록은 자동으로 다시 계산하지 않습니다.</p>
+        </section>
       </aside>
     </div>}
 
