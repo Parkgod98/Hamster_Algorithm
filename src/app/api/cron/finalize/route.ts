@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient } from "@/lib/supabase";
 import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
-import { dateRange, evaluateTimeline } from "@/lib/progress";
+import { dateRange, evaluateTimelineByDay } from "@/lib/progress";
 import { normalizeRuleConfig, penaltyForConsecutiveMisses, submissionCredit } from "@/lib/rules";
+import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "@/lib/rule-version";
 import type { Platform } from "@/lib/types";
 
 type Problem = { platform: Platform; difficulty: string };
@@ -18,16 +19,25 @@ export async function GET(request: Request) {
   const target = addStudyDays(current, -1);
   const { data: studies } = await admin
     .from(DB.studies)
-    .select("id,created_at,max_presolve_days,rule_config");
+    .select("id,created_at,max_presolve_days,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,rule_config");
   let penalties = 0;
 
   for (const study of studies ?? []) {
-    const ruleConfig = normalizeRuleConfig(study.rule_config);
-    const [{ data: members }, { data: subs }, { data: post }] = await Promise.all([
+    const fallback: EffectiveRules = {
+      effectiveFrom: studyDateFromTimestamp(study.created_at),
+      ruleConfig: normalizeRuleConfig(study.rule_config),
+      postponeDeadlineHour: study.postpone_deadline_hour,
+      postponeDeadlineMinute: study.postpone_deadline_minute,
+      maxConsecutivePostpone: study.max_consecutive_postpone,
+      maxPresolveDays: study.max_presolve_days,
+    };
+    const [{ data: members }, { data: subs }, { data: post }, versionsResult] = await Promise.all([
       admin.from(DB.studyMembers).select("user_id").eq("study_id", study.id),
       admin.from(DB.submissions).select("user_id,solved_at,hamster_problems(platform,difficulty)").eq("study_id", study.id),
       admin.from(DB.postponements).select("user_id,study_date").eq("study_id", study.id),
+      admin.from(DB.studyRuleVersions).select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days").eq("study_id", study.id).order("effective_from", { ascending: true }),
     ]);
+    const versions = normalizeRuleVersions((versionsResult.error ? [] : versionsResult.data ?? []) as RuleVersionRow[]);
     const dates = dateRange(studyDateFromTimestamp(study.created_at), target);
 
     for (const member of members ?? []) {
@@ -40,9 +50,10 @@ export async function GET(request: Request) {
         const problem = rawProblem as Problem | null;
         if (!problem) continue;
         const date = studyDateFromTimestamp(submission.solved_at);
+        const config = rulesForDate(versions, date, fallback).ruleConfig;
         creditMap.set(
           date,
-          (creditMap.get(date) ?? 0) + submissionCredit(problem.platform, problem.difficulty, ruleConfig),
+          (creditMap.get(date) ?? 0) + submissionCredit(problem.platform, problem.difficulty, config),
         );
       }
       const postponed = new Set(
@@ -50,14 +61,14 @@ export async function GET(request: Request) {
           .filter((item) => item.user_id === member.user_id)
           .map((item) => item.study_date),
       );
-      const timeline = evaluateTimeline(
+      const timeline = evaluateTimelineByDay(
         dates.map((date) => ({
           date,
           credits: creditMap.get(date) ?? 0,
           postponed: postponed.has(date),
         })),
         "__past__",
-        study.max_presolve_days,
+        (date) => rulesForDate(versions, date, fallback).maxPresolveDays,
       );
       let streak = 0;
       for (let index = timeline.length - 1; index >= 0; index -= 1) {
@@ -65,7 +76,8 @@ export async function GET(request: Request) {
         else break;
       }
       if (streak > 0) {
-        const amount = penaltyForConsecutiveMisses(streak, ruleConfig);
+        const config = rulesForDate(versions, target, fallback).ruleConfig;
+        const amount = penaltyForConsecutiveMisses(streak, config);
         const { error } = await admin.from(DB.penalties).upsert({
           study_id: study.id,
           user_id: member.user_id,
