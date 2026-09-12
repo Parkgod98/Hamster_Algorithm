@@ -29,6 +29,17 @@ export function parseBaekjoonHubCommit(repoId: number, commit: PushCommit): Norm
         seen.add(key);
         results.push({ platform: "PROGRAMMERS", externalId, title: titleFromMessage(commit.message), difficulty: `Level ${level}`, solvedAt: commit.timestamp, sourceEventId: `github:${repoId}:${commit.id}:${key}` });
       }
+      continue;
+    }
+
+    const swea = path.match(/^SWEA\/(D\d+)\/(\d+)[.\u2000-\u206F\s]/u);
+    if (swea) {
+      const [, difficulty, externalId] = swea;
+      const key = `SWEA:${externalId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push({ platform: "SWEA", externalId, title: titleFromMessage(commit.message), difficulty: difficulty.toUpperCase(), solvedAt: commit.timestamp, sourceEventId: `github:${repoId}:${commit.id}:${key}` });
+      }
     }
   }
   return results;
