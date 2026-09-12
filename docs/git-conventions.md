@@ -31,4 +31,4 @@
 - Block force pushes
 - Restrict deletions
 
-필수 status check는 `Validate repository, Git policy, lint, typecheck and build` Job을 지정합니다.
+필수 status check는 `Validate repository, Git policy, Supabase isolation, PWA, lint, typecheck and build` Job을 지정합니다.
