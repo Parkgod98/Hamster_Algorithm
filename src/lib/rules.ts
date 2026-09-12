@@ -33,11 +33,11 @@ export const DEFAULT_RULES = {
 };
 
 function safePositiveInt(value: unknown, fallback: number) {
-  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 20 ? Number(value) : fallback;
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 20 ? value : fallback;
 }
 
 function safePenalty(value: unknown, fallback: number) {
-  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 1_000_000 ? Number(value) : fallback;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1_000_000 ? value : fallback;
 }
 
 export function normalizeRuleConfig(value: unknown): StudyRuleConfig {
