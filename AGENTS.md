@@ -36,6 +36,7 @@
 npm run validate
 npm run validate:git
 npm run validate:supabase
+npm run validate:pwa
 npm run lint
 npm run typecheck
 npm run build
@@ -47,7 +48,7 @@ npm run build
 npm test
 ```
 
-`validate:supabase`는 API의 물리 테이블 하드코딩과 `hamster_` prefix가 없는 public DB object 참조를 실패 처리합니다. CI 실패를 무시하거나 검증 코드를 삭제해 통과시키지 않습니다.
+`validate:supabase`는 API의 물리 테이블 하드코딩과 `hamster_` prefix가 없는 public DB object 참조를 실패 처리합니다. `validate:pwa`는 manifest, iOS metadata, 설치 아이콘, Service Worker의 인증/API cache 경계를 확인합니다. CI 실패를 무시하거나 검증 코드를 삭제해 통과시키지 않습니다.
 
 ## Git
 - `main` 직접 작업 금지. 최초 bootstrap만 예외입니다.
