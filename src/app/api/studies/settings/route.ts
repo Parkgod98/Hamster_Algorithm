@@ -7,7 +7,7 @@ const MAX_POSTPONE = 7;
 const MAX_PRESOLVE = 14;
 
 function validInt(value: unknown, min: number, max: number) {
-  return Number.isInteger(value) && Number(value) >= min && Number(value) <= max;
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 }
 
 export async function PATCH(request: Request) {
