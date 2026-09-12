@@ -37,36 +37,23 @@ export async function GET(request: Request) {
       admin.from(DB.postponements).select("user_id,study_date").eq("study_id", study.id),
       admin.from(DB.studyRuleVersions).select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days").eq("study_id", study.id).order("effective_from", { ascending: true }),
     ]);
-    const versions = normalizeRuleVersions((versionsResult.error ? [] : versionsResult.data ?? []) as RuleVersionRow[]);
+    const versions = normalizeRuleVersions((versionsResult.error ? [] : versionsResult.data ?? []) as RuleVersionRow[], normalizeRuleConfig);
     const dates = dateRange(studyDateFromTimestamp(study.created_at), target);
 
     for (const member of members ?? []) {
       const creditMap = new Map<string, number>();
       for (const submission of subs ?? []) {
         if (submission.user_id !== member.user_id) continue;
-        const rawProblem = Array.isArray(submission.hamster_problems)
-          ? submission.hamster_problems[0]
-          : submission.hamster_problems;
+        const rawProblem = Array.isArray(submission.hamster_problems) ? submission.hamster_problems[0] : submission.hamster_problems;
         const problem = rawProblem as Problem | null;
         if (!problem) continue;
         const date = studyDateFromTimestamp(submission.solved_at);
         const config = rulesForDate(versions, date, fallback).ruleConfig;
-        creditMap.set(
-          date,
-          (creditMap.get(date) ?? 0) + submissionCredit(problem.platform, problem.difficulty, config),
-        );
+        creditMap.set(date, (creditMap.get(date) ?? 0) + submissionCredit(problem.platform, problem.difficulty, config));
       }
-      const postponed = new Set(
-        (post ?? [])
-          .filter((item) => item.user_id === member.user_id)
-          .map((item) => item.study_date),
-      );
+      const postponed = new Set((post ?? []).filter((item) => item.user_id === member.user_id).map((item) => item.study_date));
       const timeline = evaluateTimelineByDay(
-        dates.map((date) => ({
-          date,
-          credits: creditMap.get(date) ?? 0,
-          postponed: postponed.has(date),
-        })),
+        dates.map((date) => ({ date, credits: creditMap.get(date) ?? 0, postponed: postponed.has(date) })),
         "__past__",
         (date) => rulesForDate(versions, date, fallback).maxPresolveDays,
       );
