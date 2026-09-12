@@ -5,9 +5,20 @@ export type TimelineDay={date:string;credits:number;postponed:boolean};
 export type TimelineResult={date:string;state:"complete"|"in-progress"|"postponed"|"missed";available:number};
 
 export function evaluateTimeline(days:TimelineDay[],currentDate:string,maxCarryDays=2):TimelineResult[]{
-  const ordered=[...days].sort((a,b)=>a.date.localeCompare(b.date)); const lots:{earnedOn:string;credit:number}[]=[]; const out:TimelineResult[]=[];
+  return evaluateTimelineByDay(days,currentDate,()=>maxCarryDays);
+}
+
+export function evaluateTimelineByDay(
+  days: TimelineDay[],
+  currentDate: string,
+  maxCarryDaysForDate: (date: string) => number,
+): TimelineResult[] {
+  const ordered=[...days].sort((a,b)=>a.date.localeCompare(b.date));
+  const lots:{earnedOn:string;credit:number}[]=[];
+  const out:TimelineResult[]=[];
   for(const day of ordered){
     if(day.credits>0)lots.push({earnedOn:day.date,credit:day.credits});
+    const maxCarryDays=Math.max(0,maxCarryDaysForDate(day.date));
     for(const lot of lots){ if(dayDistance(lot.earnedOn,day.date)>maxCarryDays)lot.credit=0; }
     const available=lots.reduce((s,l)=>s+l.credit,0);
     if(day.postponed){out.push({date:day.date,state:"postponed",available});continue;}

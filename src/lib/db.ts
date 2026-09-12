@@ -2,6 +2,7 @@ export const DB = {
   profiles: "hamster_profiles",
   studies: "hamster_studies",
   studyMembers: "hamster_study_members",
+  studyRuleVersions: "hamster_study_rule_versions",
   githubInstallations: "hamster_github_installations",
   repositoryConnections: "hamster_repository_connections",
   problems: "hamster_problems",

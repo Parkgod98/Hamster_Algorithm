@@ -10,6 +10,10 @@ export function browserSupabase() {
     auth: {
       flowType: "pkce",
       detectSessionInUrl: false,
+      persistSession: true,
+      autoRefreshToken: true,
+      storage: typeof window === "undefined" ? undefined : window.localStorage,
+      storageKey: "hamster-auth",
     },
   });
   return client;

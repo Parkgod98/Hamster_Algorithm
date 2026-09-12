@@ -7,7 +7,7 @@ on:
 
 jobs:
   validate:
-    name: Validate repository, Git policy, Supabase isolation, lint, typecheck and build
+    name: Validate repository, Git policy, Supabase isolation, PWA, lint, typecheck and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +20,7 @@ jobs:
       - run: npm run validate
       - run: npm run validate:git
       - run: npm run validate:supabase
+      - run: npm run validate:pwa
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
