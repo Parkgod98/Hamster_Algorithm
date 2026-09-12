@@ -1,4 +1,4 @@
-import { normalizeRuleConfig, type StudyRuleConfig } from "./rules";
+import type { StudyRuleConfig } from "./rules";
 
 export type RuleVersionRow = {
   effective_from: string;
@@ -20,7 +20,10 @@ export type EffectiveRules = {
   maxPresolveDays: number;
 };
 
-export function normalizeRuleVersions(rows: RuleVersionRow[]): EffectiveRules[] {
+export function normalizeRuleVersions(
+  rows: RuleVersionRow[],
+  normalizeRuleConfig: (value: unknown) => StudyRuleConfig,
+): EffectiveRules[] {
   return rows
     .map((row) => ({
       effectiveFrom: row.effective_from,
