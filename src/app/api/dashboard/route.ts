@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
-import { submissionCredit } from "@/lib/rules";
+import { normalizeRuleConfig, submissionCredit } from "@/lib/rules";
 import { dateRange, evaluateTimeline } from "@/lib/progress";
 import type { Platform } from "@/lib/types";
 
@@ -42,7 +42,12 @@ export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
     const admin = createAdminClient();
-    const { data: membership } = await admin.from(DB.studyMembers).select("study_id").eq("user_id", user.id).limit(1).maybeSingle();
+    const { data: membership } = await admin
+      .from(DB.studyMembers)
+      .select("study_id,role")
+      .eq("user_id", user.id)
+      .limit(1)
+      .maybeSingle();
     const current = studyDateFromTimestamp(new Date().toISOString());
     const month = requestedMonth(request.url, current);
     const bounds = monthBounds(month);
@@ -62,11 +67,12 @@ export async function GET(request: Request) {
 
     const { data: study } = await admin
       .from(DB.studies)
-      .select("id,name,invite_code,created_at,max_presolve_days")
+      .select("id,name,invite_code,created_at,max_presolve_days,max_consecutive_postpone,postpone_deadline_hour,postpone_deadline_minute,rule_config")
       .eq("id", membership.study_id)
       .single();
     if (!study) return NextResponse.json({ error: "study not found" }, { status: 404 });
 
+    const ruleConfig = normalizeRuleConfig(study.rule_config);
     const [{ data: members }, { data: repos }, { data: subs }, { data: postponements }, { data: penalties }] = await Promise.all([
       admin.from(DB.studyMembers).select("user_id,display_name,joined_at").eq("study_id", study.id).order("joined_at", { ascending: true }),
       admin.from(DB.repositoryConnections).select("id,full_name").eq("study_id", study.id).eq("user_id", user.id).eq("active", true),
@@ -96,7 +102,7 @@ export async function GET(request: Request) {
         const problem = problemFromRelation(submission.hamster_problems);
         if (!problem) continue;
         const date = studyDateFromTimestamp(submission.solved_at);
-        const credit = submissionCredit(problem.platform, problem.difficulty);
+        const credit = submissionCredit(problem.platform, problem.difficulty, ruleConfig);
         creditMap.set(date, (creditMap.get(date) ?? 0) + credit);
         const list = submissionsByDate.get(date) ?? [];
         list.push({
@@ -170,7 +176,17 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
-      study: { id: study.id, name: study.name, inviteCode: study.invite_code },
+      study: {
+        id: study.id,
+        name: study.name,
+        inviteCode: study.invite_code,
+        role: membership.role,
+        rules: ruleConfig,
+        postponeDeadlineHour: study.postpone_deadline_hour,
+        postponeDeadlineMinute: study.postpone_deadline_minute,
+        maxConsecutivePostpone: study.max_consecutive_postpone,
+        maxPresolveDays: study.max_presolve_days,
+      },
       members: memberRows.map((member) => ({ userId: member.user_id, name: member.display_name })),
       repositories: (repos ?? []).map((repo) => ({ id: repo.id, fullName: repo.full_name })),
       days,
