@@ -85,7 +85,7 @@ export async function GET(request: Request) {
     const [membersResult, reposResult, subsResult, postponementsResult, penaltiesResult, versionsResult] = await Promise.all([
       admin.from(DB.studyMembers).select("user_id,display_name,joined_at").eq("study_id", study.id).order("joined_at", { ascending: true }),
       admin.from(DB.repositoryConnections).select("id,full_name").eq("study_id", study.id).eq("user_id", user.id).eq("active", true),
-      admin.from(DB.submissions).select("user_id,solved_at,hamster_problems(platform,external_id,title,difficulty)").eq("study_id", study.id).order("solved_at", { ascending: true }),
+      admin.from(DB.submissions).select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)").eq("study_id", study.id).order("solved_at", { ascending: true }),
       admin.from(DB.postponements).select("user_id,study_date,requested_at").eq("study_id", study.id),
       admin.from(DB.penalties).select("user_id,amount,study_date,consecutive_misses").eq("study_id", study.id),
       admin.from(DB.studyRuleVersions).select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days,changed_by,created_at").eq("study_id", study.id).order("effective_from", { ascending: true }),
@@ -116,7 +116,7 @@ export async function GET(request: Request) {
         const credit = submissionCredit(problem.platform, problem.difficulty, effective.ruleConfig);
         creditMap.set(date, (creditMap.get(date) ?? 0) + credit);
         const list = submissionsByDate.get(date) ?? [];
-        list.push({ platform: problem.platform, problemId: problem.external_id, title: problem.title, difficulty: problem.difficulty, credit, solvedAt: submission.solved_at });
+        list.push({ platform: problem.platform, problemId: problem.external_id, title: problem.title, difficulty: problem.difficulty, credit, solvedAt: submission.solved_at, source: submission.source });
         submissionsByDate.set(date, list);
       }
 
