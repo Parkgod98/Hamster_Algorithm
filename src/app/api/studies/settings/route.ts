@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 import { normalizeRuleConfig } from "@/lib/rules";
+import { studyDateFromTimestamp } from "@/lib/study-day";
 
 const MAX_POSTPONE = 7;
 const MAX_PRESOLVE = 14;
@@ -36,29 +37,42 @@ export async function PATCH(request: Request) {
     const admin = createAdminClient();
     const { data: membership } = await admin
       .from(DB.studyMembers)
-      .select("role")
+      .select("study_id")
       .eq("study_id", body.studyId)
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (!membership || membership.role !== "admin") {
-      return NextResponse.json({ error: "관리자만 인증 규칙을 변경할 수 있습니다." }, { status: 403 });
+    if (!membership) {
+      return NextResponse.json({ error: "스터디 참여원만 인증 규칙을 변경할 수 있습니다." }, { status: 403 });
     }
 
     const ruleConfig = normalizeRuleConfig(body.ruleConfig);
-    const { error } = await admin
-      .from(DB.studies)
-      .update({
-        rule_config: ruleConfig,
-        postpone_deadline_hour: body.postponeDeadlineHour,
-        postpone_deadline_minute: body.postponeDeadlineMinute,
-        max_consecutive_postpone: body.maxConsecutivePostpone,
-        max_presolve_days: body.maxPresolveDays,
-      })
-      .eq("id", body.studyId);
+    const settings = {
+      rule_config: ruleConfig,
+      postpone_deadline_hour: body.postponeDeadlineHour,
+      postpone_deadline_minute: body.postponeDeadlineMinute,
+      max_consecutive_postpone: body.maxConsecutivePostpone,
+      max_presolve_days: body.maxPresolveDays,
+    };
 
+    const { error } = await admin.from(DB.studies).update(settings).eq("id", body.studyId);
     if (error) return NextResponse.json({ error: "규칙을 저장하지 못했습니다." }, { status: 500 });
-    return NextResponse.json({ ok: true, ruleConfig });
+
+    const effectiveFrom = studyDateFromTimestamp(new Date().toISOString());
+    const { error: historyError } = await admin.from(DB.studyRuleVersions).upsert({
+      study_id: body.studyId,
+      effective_from: effectiveFrom,
+      rule_config: ruleConfig,
+      postpone_deadline_hour: body.postponeDeadlineHour,
+      postpone_deadline_minute: body.postponeDeadlineMinute,
+      max_consecutive_postpone: body.maxConsecutivePostpone,
+      max_presolve_days: body.maxPresolveDays,
+      changed_by: user.id,
+      created_at: new Date().toISOString(),
+    }, { onConflict: "study_id,effective_from" });
+
+    if (historyError) return NextResponse.json({ error: "규칙 변경 이력을 저장하지 못했습니다." }, { status: 500 });
+    return NextResponse.json({ ok: true, ruleConfig, effectiveFrom });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
