@@ -21,6 +21,9 @@ assert(fs.existsSync(path.join(root, "public/icon-512.png")), "512px icon is mis
 assert(fs.existsSync(path.join(root, "public/apple-touch-icon.png")), "Apple touch icon is missing");
 assert(sw.includes('url.pathname.startsWith("/api/")'), "service worker must explicitly bypass API caching");
 assert(sw.includes('request.mode === "navigate"'), "service worker must keep navigation network-first");
+assert(sw.includes('addEventListener("push"'), "service worker must handle Web Push events");
+assert(sw.includes('addEventListener("notificationclick"'), "service worker must handle notification clicks");
+assert(sw.includes("showNotification"), "service worker must display push notifications");
 assert(!sw.includes("cache.addAll(['/','/dashboard'])"), "authenticated application shell must not be precached");
 
 console.log("PWA validation passed.");
