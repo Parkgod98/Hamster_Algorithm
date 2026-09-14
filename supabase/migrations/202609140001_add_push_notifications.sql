@@ -34,6 +34,3 @@ on public.hamster_notification_deliveries(user_id,study_date desc);
 alter table public.hamster_push_subscriptions enable row level security;
 alter table public.hamster_notification_preferences enable row level security;
 alter table public.hamster_notification_deliveries enable row level security;
-
--- Push endpoint/key and delivery history are server-only. The authenticated client
--- uses /api/push/subscriptions, so no direct authenticated RLS policy is granted.
