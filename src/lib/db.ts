@@ -10,4 +10,7 @@ export const DB = {
   postponements: "hamster_postponements",
   penalties: "hamster_penalties",
   webhookEvents: "hamster_webhook_events",
+  pushSubscriptions: "hamster_push_subscriptions",
+  notificationPreferences: "hamster_notification_preferences",
+  notificationDeliveries: "hamster_notification_deliveries",
 } as const;
