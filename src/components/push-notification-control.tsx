@@ -39,15 +39,23 @@ export function PushNotificationControl() {
   }
 
   useEffect(() => {
-    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
-    if (!supported) {
-      setUnsupported(true);
-      return;
-    }
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
-    if (ios && !standalone) setNeedsInstall(true);
-    void load();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+        if (!supported) {
+          setUnsupported(true);
+          return;
+        }
+        const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+        const standalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+        if (ios && !standalone) setNeedsInstall(true);
+        const access = await token();
+        if (!access) return;
+        const response = await fetch("/api/push/subscriptions", { headers: { Authorization: `Bearer ${access}` } });
+        if (response.ok) setSettings(await response.json() as PushSettings);
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   async function enable() {
