@@ -3,6 +3,7 @@ import { ClientEnhancements } from "@/components/client-enhancements";
 import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
 import "./enhancements.css";
+import "./push.css";
 
 export const metadata: Metadata = {
   title: "햄쮸터",

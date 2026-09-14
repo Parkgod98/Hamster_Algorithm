@@ -16,6 +16,7 @@ Hamster Algorithm은 각자의 Repository에서 발생한 풀이 이벤트를 �
 8. 통계 탭에서 멤버별 월간 인증률, 완료/미제출/미루기, 연속 인증, 누적 벌금을 확인합니다.
 9. 못 푸는 날은 설정된 미루기 마감 전 미루기를 신청합니다.
 10. Study 참여원 누구나 설정에서 문제 수, 미루기/선풀이 한도, 벌금 규칙을 조정할 수 있습니다.
+11. 사용자는 PWA에서 Push 알림을 켜 인증 완료와 23:30 미인증 reminder를 받을 수 있습니다.
 
 ## 기본 햄쮸터 규칙
 - BOJ Bronze 2~1: 3문제
@@ -57,6 +58,17 @@ Study Day 경계인 04:00은 현재 운영 cron의 04:05 확정 시점과 결합
 
 규칙은 `hamster_study_rule_versions`에 Study Day 단위로 버전이 기록됩니다. 변경일 이전 날짜는 이전 규칙, 변경일 이후 날짜는 새 규칙으로 계산합니다. 같은 Study Day에 여러 번 저장하면 해당 날짜의 최신 설정으로 갱신합니다. 이미 `hamster_penalties`에 확정된 과거 벌금 row는 자동 소급 수정하지 않습니다.
 
+## Push 알림
+알림은 사용자가 직접 켠 기기에서만 발송합니다.
+
+- 인증 완료: 자동 또는 수동 풀이가 반영된 뒤 현재 Study Day가 `미완료 → 완료`로 처음 전환되는 순간 `🐹 오늘 인증 완료! 수고했다 쮸!`를 전송합니다.
+- 23:30 미인증 reminder: 현재 Study Day가 아직 완료되지 않았고 미루기도 신청하지 않은 사용자에게 `🐹 아직 오늘 인증이 안 됐어. 04:00 전까지 풀거나 미루기 신청해줘! 쮸!`를 전송합니다.
+- 같은 Study Day/사용자/알림 종류는 한 번만 발송합니다.
+- 완료 또는 미루기 상태에는 23:30 reminder를 보내지 않습니다.
+- Push endpoint가 404/410으로 만료되면 구독 정보를 제거합니다.
+- 사용자는 완료 알림과 reminder를 각각 켜거나 끌 수 있습니다.
+- Android는 지원 브라우저/PWA에서 사용하며 iPhone은 홈 화면에 추가한 PWA에서 알림 권한을 허용해야 합니다.
+
 ## 제품 해석이 필요한 부분
 원문에는 서로 다른 난이도/플랫폼 문제를 같은 날 섞어 풀었을 때의 합산 규칙이 없습니다. 문제별 필요량의 역수를 credit으로 계산해 합이 1 이상이면 완료로 판정합니다. 예: 기본 규칙에서 Silver 1문제(0.5) + Bronze 2문제(0.666...)도 완료입니다.
 
@@ -66,6 +78,7 @@ A형 취득자의 BOJ 최소 난이도 Silver 3 규칙은 멤버별 자격 속�
 - Web App Manifest의 `display: standalone`과 `/dashboard` start URL을 사용합니다.
 - Chromium 계열은 install prompt를 이용하고 iOS Safari는 `홈 화면에 추가` 안내를 제공합니다.
 - Service Worker는 인증 API와 navigation을 cache하지 않습니다.
+- Service Worker가 Web Push 수신과 notification click을 처리합니다.
 - 로그인 session은 localStorage에 유지하고 refresh token을 자동 갱신합니다.
 - 사용자가 설정에서 직접 로그아웃하면 session을 종료합니다.
 
@@ -74,7 +87,7 @@ A형 취득자의 BOJ 최소 난이도 Silver 3 규칙은 멤버별 자격 속�
 - Study / Member / Repository 연결 schema
 - 첫 사용 onboarding과 초대 코드 참여
 - GitHub App 설치와 push webhook 수집
-- BaekjoonHub BOJ / Programmers 자동 파싱
+- BaekjoonHub BOJ / Programmers / SWEA 자동 파싱
 - 사진 없는 간편 수동 인증
 - Study Day(04:00) 판정
 - credit 기반 하루 완료 판정
@@ -83,10 +96,10 @@ A형 취득자의 BOJ 최소 난이도 Silver 3 규칙은 멤버별 자격 속�
 - 모바일 주간/월간 전환
 - 멤버별 월간 통계
 - Study 참여원 공용 인증 규칙 설정과 규칙 변경 이력
+- 인증 완료 / 23:30 미인증 Web Push 알림
 - Chrome Extension/SWEA/CodeTree를 위한 authenticated manual ingestion endpoint
 
 ## 후속 범위
-- 실제 Web Push 알림(23:00, 23:50, 03:30 등)
 - SWEA/CodeTree 전용 Chrome Extension
 - 기존 Notion history import
 - A형 취득자 최소 난이도 판정 UI
