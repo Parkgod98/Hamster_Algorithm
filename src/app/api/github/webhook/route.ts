@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { parseBaekjoonHubCommit } from "@/lib/baekjoonhub";
 import { DB } from "@/lib/db";
 import { verifyGithubSignature } from "@/lib/github-app";
+import { shouldSendCompletion } from "@/lib/notification-rules";
+import { sendStudyNotificationOnce } from "@/lib/push";
+import { memberProgressForStudyDay } from "@/lib/server-progress";
+import { studyDateFromTimestamp } from "@/lib/study-day";
 import { createAdminClient } from "@/lib/supabase";
 
 export async function POST(request: Request) {
@@ -22,6 +26,8 @@ export async function POST(request: Request) {
   if (connectionError) return NextResponse.json({ error: connectionError.message }, { status: 500 });
   if (!connection) return NextResponse.json({ ok: true, ignored: "unconnected repository" });
 
+  const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
+  const beforeState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
   let inserted = 0;
   for (const commit of payload.commits ?? []) {
     for (const submission of parseBaekjoonHubCommit(payload.repository.id, commit)) {
@@ -32,6 +38,19 @@ export async function POST(request: Request) {
       else if (error.code !== "23505") return NextResponse.json({ error: error.message }, { status: 500 });
     }
   }
+
+  if (inserted > 0) {
+    const afterState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
+    if (shouldSendCompletion(beforeState, afterState)) {
+      await sendStudyNotificationOnce(admin, {
+        studyId: connection.study_id,
+        userId: connection.user_id,
+        studyDate: currentStudyDate,
+        kind: "completion",
+      });
+    }
+  }
+
   await admin.from(DB.webhookEvents).update({ processed_at: new Date().toISOString() }).eq("delivery_id", deliveryId);
   return NextResponse.json({ ok: true, inserted });
 }
