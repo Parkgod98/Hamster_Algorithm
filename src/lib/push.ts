@@ -94,7 +94,7 @@ async function beginDelivery(
       .select("id")
       .maybeSingle();
     if (error) throw error;
-    return data?.id as string | undefined ?? null;
+    return (data?.id as string | undefined) ?? null;
   }
 
   const { data, error } = await admin.from(DB.notificationDeliveries)
