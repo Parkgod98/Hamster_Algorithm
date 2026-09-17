@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DB } from "./db";
-import { dateRange, evaluateTimelineByDay } from "./progress";
+import { dateRange, evaluateTimelineByDay, type TimelineResult } from "./progress";
 import { normalizeRuleConfig, submissionCredit } from "./rules";
 import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "./rule-version";
 import { studyDateFromTimestamp } from "./study-day";
@@ -9,12 +9,12 @@ import type { Platform } from "./types";
 
 type ProblemRelation = { platform: Platform; difficulty: string };
 
-export async function memberProgressForStudyDay(
+export async function memberProgressSnapshot(
   admin: SupabaseClient,
   studyId: string,
   userId: string,
   targetDate: string,
-): Promise<NotificationProgressState> {
+): Promise<TimelineResult | null> {
   const [{ data: study }, { data: membership }, versionsResult, submissionsResult, postponementsResult] = await Promise.all([
     admin.from(DB.studies)
       .select("id,created_at,max_presolve_days,max_consecutive_postpone,postpone_deadline_hour,postpone_deadline_minute,rule_config")
@@ -35,9 +35,9 @@ export async function memberProgressForStudyDay(
       .eq("user_id", userId),
   ]);
 
-  if (!study || !membership) return "missed";
+  if (!study || !membership) return null;
   const joinedDate = studyDateFromTimestamp(membership.joined_at);
-  if (targetDate < joinedDate) return "missed";
+  if (targetDate < joinedDate) return null;
 
   const fallback: EffectiveRules = {
     effectiveFrom: studyDateFromTimestamp(study.created_at),
@@ -66,5 +66,15 @@ export async function memberProgressForStudyDay(
     targetDate,
     (date) => rulesForDate(versions, date, fallback).maxPresolveDays,
   );
-  return timeline.at(-1)?.state ?? "in-progress";
+  return timeline.at(-1) ?? null;
+}
+
+export async function memberProgressForStudyDay(
+  admin: SupabaseClient,
+  studyId: string,
+  userId: string,
+  targetDate: string,
+): Promise<NotificationProgressState> {
+  const snapshot = await memberProgressSnapshot(admin, studyId, userId, targetDate);
+  return snapshot?.state ?? "missed";
 }
