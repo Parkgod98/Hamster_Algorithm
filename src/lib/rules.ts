@@ -98,8 +98,9 @@ export function penaltyForConsecutiveMisses(
   days: number,
   config: StudyRuleConfig = DEFAULT_RULE_CONFIG,
 ): number | null {
-  if (days === 1 || days === 2 || days === 3) return config.penalties[days];
-  return null;
+  if (days <= 0) return null;
+  const level = Math.min(3, Math.floor(days)) as 1 | 2 | 3;
+  return config.penalties[level];
 }
 
 export type CreditLot = { earnedOn: string; credit: number };

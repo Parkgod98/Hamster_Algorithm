@@ -99,21 +99,31 @@ Study 참여원이 필요 문제 수를 변경하면 각 구간 credit을 `1 / �
 
 서로 다른 난이도를 섞어 푼 경우 credit 합산으로 판정하는 것은 원문에 명시되지 않은 제품 해석이며 `docs/product-spec.md`에 명시합니다.
 
-## Pre-solve / Postpone / Penalty
-- 초과 credit은 해당 날짜의 `max_presolve_days` 범위 안에서 오래된 credit부터 carry합니다.
-- 미루기 신청 시각과 연속 횟수는 현재 Study 설정값을 사용합니다.
-- 미제출 1/2/3일 금액은 대상 날짜의 rule version에 저장된 `rule_config.penalties`를 사용합니다.
-- 3일 초과 정책은 확정되지 않았으므로 자동 금액을 임의 확장하지 않습니다.
-- 이미 `hamster_penalties`에 확정된 과거 벌금 row는 규칙 변경 시 소급 수정하지 않습니다.
+## Obligation backlog / Postpone / Pre-solve / Penalty
+Rule Engine은 날짜별 상태를 독립적인 면제 여부로 보지 않고 `1 Study Day = 1 obligation`으로 계산합니다.
+
+- 각 참여 Study Day마다 1.0 obligation을 FIFO queue에 추가합니다.
+- Submission credit은 발생한 Study Day 시점에 queue의 가장 오래된 미해결 obligation부터 사용합니다.
+- 한 obligation이 1.0을 모두 받아야 그 날짜가 `complete`가 됩니다. 0.5만 채운 상태는 부분 상환일 뿐 미해결 obligation 개수는 줄지 않습니다.
+- `hamster_postponements` row는 obligation을 삭제하지 않습니다. 해당 날짜를 벌금 없이 이월할 수 있게 하는 이력입니다.
+- 과거 postponed obligation이 나중 Submission으로 완전히 상환되면 현재 계산 상태는 `complete`가 되지만 postponement row는 그대로 유지합니다.
+- 기본 `max_consecutive_postpone=2`에서는 현재 Study Day까지 미해결 obligation이 2개 이하일 때만 오늘 postpone을 새로 기록할 수 있습니다. 3개라면 최소 1개를 완전히 상환해야 합니다.
+- backlog가 모두 해결된 뒤 남는 credit만 carry lot이 되어 해당 날짜의 `max_presolve_days` 동안 미래 obligation을 선풀이할 수 있습니다.
+- carry lot은 `earnedOn`을 유지하며 만료 후에는 미래 obligation에 사용할 수 없습니다.
+- 미루기를 신청하지 않은 날짜가 04:00에 마감될 때 현재 미해결 obligation 개수가 벌금 단계가 됩니다. 1개=1회, 2개=2회, 3개 이상=3회 최고 단계입니다.
+- `hamster_penalties`는 확정 이력입니다. 이후 과거 obligation을 상환해도 이미 저장된 penalty row를 수정하거나 삭제하지 않습니다.
+
+이 계산은 Dashboard, postpone API, penalty cron, completion/reminder Push가 모두 동일한 `src/lib/progress.ts` 엔진을 사용하도록 유지합니다.
 
 ## Web Push
 - `hamster_push_subscriptions`: 사용자 기기별 endpoint, `p256dh`, `auth` key를 저장합니다.
 - `hamster_notification_preferences`: 인증 완료/23:30 reminder 알림의 사용자별 on/off를 저장합니다.
-- `hamster_notification_deliveries`: `(study_id,user_id,study_date,kind)` unique constraint로 같은 알림의 중복 전송을 막습니다.
+- `hamster_notification_deliveries`: 기기 subscription 단위 delivery 상태로 같은 알림의 성공 후 중복 전송을 막습니다.
 - 브라우저는 Service Worker의 `PushManager`로 subscription을 만들고 인증 API `/api/push/subscriptions`를 통해 서버에 저장합니다.
 - VAPID public key만 client에 전달하며 private key는 서버 환경변수로 유지합니다.
-- GitHub webhook과 수동 인증 API는 제출 전/후 현재 Study Day 상태를 계산하고 `미완료 → 완료` 전환일 때만 completion Push를 요청합니다.
-- `/api/cron/remind`는 매일 14:30 UTC(23:30 KST)에 실행하고 완료 또는 미루기 상태는 제외합니다.
+- GitHub webhook과 수동 인증 API는 제출 전/후 현재 Study Day 상태를 계산하고 backlog와 오늘 obligation이 모두 해결되어 `미완료 → 완료` 전환일 때만 completion Push를 요청합니다.
+- `/api/cron/remind`는 reminder delivery window에 실행하고 현재 Study Day까지 미해결 obligation이 남으면서 오늘 postpone을 사용하지 않은 사용자에게만 발송합니다.
+- Push 실패는 풀이 저장을 실패시키지 않고 delivery 상태를 통해 재시도합니다.
 - 404/410을 반환하는 만료 endpoint는 전송 시 제거합니다.
 - iPhone은 홈 화면에 설치한 PWA에서 사용자 gesture로 알림 권한을 허용해야 합니다.
 

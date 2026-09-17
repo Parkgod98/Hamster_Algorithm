@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient } from "@/lib/supabase";
 import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
-import { dateRange, evaluateTimelineByDay } from "@/lib/progress";
+import { dateRange, evaluateTimelineByDay, penaltyLevelForBacklog } from "@/lib/progress";
 import { normalizeRuleConfig, penaltyForConsecutiveMisses, submissionCredit } from "@/lib/rules";
 import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "@/lib/rule-version";
 import type { Platform } from "@/lib/types";
@@ -32,15 +32,17 @@ export async function GET(request: Request) {
       maxPresolveDays: study.max_presolve_days,
     };
     const [{ data: members }, { data: subs }, { data: post }, versionsResult] = await Promise.all([
-      admin.from(DB.studyMembers).select("user_id").eq("study_id", study.id),
+      admin.from(DB.studyMembers).select("user_id,joined_at").eq("study_id", study.id),
       admin.from(DB.submissions).select("user_id,solved_at,hamster_problems(platform,difficulty)").eq("study_id", study.id),
       admin.from(DB.postponements).select("user_id,study_date").eq("study_id", study.id),
       admin.from(DB.studyRuleVersions).select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days").eq("study_id", study.id).order("effective_from", { ascending: true }),
     ]);
     const versions = normalizeRuleVersions((versionsResult.error ? [] : versionsResult.data ?? []) as RuleVersionRow[], normalizeRuleConfig);
-    const dates = dateRange(studyDateFromTimestamp(study.created_at), target);
 
     for (const member of members ?? []) {
+      const joinedDate = studyDateFromTimestamp(member.joined_at);
+      if (target < joinedDate) continue;
+      const dates = dateRange(joinedDate, target);
       const creditMap = new Map<string, number>();
       for (const submission of subs ?? []) {
         if (submission.user_id !== member.user_id) continue;
@@ -48,6 +50,7 @@ export async function GET(request: Request) {
         const problem = rawProblem as Problem | null;
         if (!problem) continue;
         const date = studyDateFromTimestamp(submission.solved_at);
+        if (date > target) continue;
         const config = rulesForDate(versions, date, fallback).ruleConfig;
         creditMap.set(date, (creditMap.get(date) ?? 0) + submissionCredit(problem.platform, problem.difficulty, config));
       }
@@ -57,24 +60,30 @@ export async function GET(request: Request) {
         "__past__",
         (date) => rulesForDate(versions, date, fallback).maxPresolveDays,
       );
-      let streak = 0;
-      for (let index = timeline.length - 1; index >= 0; index -= 1) {
-        if (timeline[index].state === "missed") streak += 1;
-        else break;
-      }
-      if (streak > 0) {
-        const config = rulesForDate(versions, target, fallback).ruleConfig;
-        const amount = penaltyForConsecutiveMisses(streak, config);
-        const { error } = await admin.from(DB.penalties).upsert({
-          study_id: study.id,
-          user_id: member.user_id,
-          study_date: target,
-          consecutive_misses: streak,
-          amount,
-          reason: "missed",
-        }, { onConflict: "study_id,user_id,study_date" });
-        if (!error) penalties += 1;
-      }
+      const targetResult = timeline.at(-1);
+      if (!targetResult || postponed.has(target) || targetResult.backlogCount <= 0) continue;
+
+      const level = penaltyLevelForBacklog(targetResult.backlogCount);
+      if (level <= 0) continue;
+      const config = rulesForDate(versions, target, fallback).ruleConfig;
+      const amount = penaltyForConsecutiveMisses(level, config);
+      const { data: existing } = await admin.from(DB.penalties)
+        .select("id")
+        .eq("study_id", study.id)
+        .eq("user_id", member.user_id)
+        .eq("study_date", target)
+        .maybeSingle();
+      if (existing) continue;
+
+      const { error } = await admin.from(DB.penalties).insert({
+        study_id: study.id,
+        user_id: member.user_id,
+        study_date: target,
+        consecutive_misses: level,
+        amount,
+        reason: "missed",
+      });
+      if (!error) penalties += 1;
     }
   }
 
