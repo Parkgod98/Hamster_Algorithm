@@ -27,7 +27,13 @@ export async function POST(request: Request) {
   if (!connection) return NextResponse.json({ ok: true, ignored: "unconnected repository" });
 
   const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
-  const beforeState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
+  let beforeState: Awaited<ReturnType<typeof memberProgressForStudyDay>> | null = null;
+  try {
+    beforeState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
+  } catch (error) {
+    console.error("completion push pre-state lookup failed", { deliveryId, error });
+  }
+
   let inserted = 0;
   for (const commit of payload.commits ?? []) {
     for (const submission of parseBaekjoonHubCommit(payload.repository.id, commit)) {
@@ -39,15 +45,19 @@ export async function POST(request: Request) {
     }
   }
 
-  if (inserted > 0) {
-    const afterState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
-    if (shouldSendCompletion(beforeState, afterState)) {
-      await sendStudyNotificationOnce(admin, {
-        studyId: connection.study_id,
-        userId: connection.user_id,
-        studyDate: currentStudyDate,
-        kind: "completion",
-      });
+  if (inserted > 0 && beforeState) {
+    try {
+      const afterState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
+      if (shouldSendCompletion(beforeState, afterState)) {
+        await sendStudyNotificationOnce(admin, {
+          studyId: connection.study_id,
+          userId: connection.user_id,
+          studyDate: currentStudyDate,
+          kind: "completion",
+        });
+      }
+    } catch (error) {
+      console.error("completion push failed after GitHub submission saved", { deliveryId, error });
     }
   }
 
