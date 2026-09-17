@@ -1,11 +1,27 @@
-import { addStudyDays } from "./study-day";
-import { consumeForDay } from "./rules";
+export type TimelineDay = { date: string; credits: number; postponed: boolean };
+export type TimelineState = "complete" | "in-progress" | "postponed" | "missed";
+export type TimelineResult = {
+  date: string;
+  state: TimelineState;
+  available: number;
+  remaining: number;
+  backlogCount: number;
+  resolvedOn: string | null;
+};
 
-export type TimelineDay={date:string;credits:number;postponed:boolean};
-export type TimelineResult={date:string;state:"complete"|"in-progress"|"postponed"|"missed";available:number};
+type Obligation = {
+  date: string;
+  remaining: number;
+  postponed: boolean;
+  result: TimelineResult;
+};
 
-export function evaluateTimeline(days:TimelineDay[],currentDate:string,maxCarryDays=2):TimelineResult[]{
-  return evaluateTimelineByDay(days,currentDate,()=>maxCarryDays);
+type CreditLot = { earnedOn: string; credit: number };
+
+const EPSILON = 1e-9;
+
+export function evaluateTimeline(days: TimelineDay[], currentDate: string, maxCarryDays = 2): TimelineResult[] {
+  return evaluateTimelineByDay(days, currentDate, () => maxCarryDays);
 }
 
 export function evaluateTimelineByDay(
@@ -13,21 +29,111 @@ export function evaluateTimelineByDay(
   currentDate: string,
   maxCarryDaysForDate: (date: string) => number,
 ): TimelineResult[] {
-  const ordered=[...days].sort((a,b)=>a.date.localeCompare(b.date));
-  const lots:{earnedOn:string;credit:number}[]=[];
-  const out:TimelineResult[]=[];
-  for(const day of ordered){
-    if(day.credits>0)lots.push({earnedOn:day.date,credit:day.credits});
-    const maxCarryDays=Math.max(0,maxCarryDaysForDate(day.date));
-    for(const lot of lots){ if(dayDistance(lot.earnedOn,day.date)>maxCarryDays)lot.credit=0; }
-    const available=lots.reduce((s,l)=>s+l.credit,0);
-    if(day.postponed){out.push({date:day.date,state:"postponed",available});continue;}
-    if(day.date===currentDate&&available<1){out.push({date:day.date,state:"in-progress",available});continue;}
-    const result=consumeForDay(lots,day.date,maxCarryDays);
-    out.push({date:day.date,state:result.complete?"complete":"missed",available});
+  const ordered = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  const obligations: Obligation[] = [];
+  const carryLots: CreditLot[] = [];
+  const results: TimelineResult[] = [];
+
+  for (const day of ordered) {
+    const maxCarryDays = Math.max(0, maxCarryDaysForDate(day.date));
+    expireCarry(carryLots, day.date, maxCarryDays);
+
+    const result: TimelineResult = {
+      date: day.date,
+      state: unresolvedState(day.date, currentDate, day.postponed),
+      available: 0,
+      remaining: 1,
+      backlogCount: 0,
+      resolvedOn: null,
+    };
+    const obligation: Obligation = { date: day.date, remaining: 1, postponed: day.postponed, result };
+    obligations.push(obligation);
+    results.push(result);
+
+    for (const lot of carryLots) {
+      if (lot.credit <= EPSILON) continue;
+      applyCredit(obligations, lot, lot.earnedOn);
+    }
+
+    if (day.credits > EPSILON) {
+      const todayLot = { earnedOn: day.date, credit: day.credits };
+      applyCredit(obligations, todayLot, day.date);
+      if (todayLot.credit > EPSILON) carryLots.push(todayLot);
+    }
+
+    cleanupCarry(carryLots);
+    for (const item of obligations) {
+      item.result.remaining = normalize(item.remaining);
+      item.result.available = normalize(1 - item.remaining);
+      if (item.remaining <= EPSILON) item.result.state = "complete";
+    }
+    result.backlogCount = obligations.filter((item) => item.remaining > EPSILON).length;
   }
-  return out;
+
+  return results;
 }
 
-export function dateRange(start:string,end:string){const dates=[];for(let d=start;d<=end;d=addStudyDays(d,1))dates.push(d);return dates;}
-function dayDistance(a:string,b:string){return Math.floor((Date.parse(`${b}T00:00:00Z`)-Date.parse(`${a}T00:00:00Z`))/86400000);}
+export function canPostponeWithBacklog(result: TimelineResult, maxConsecutivePostpone: number) {
+  if (result.state === "complete") return false;
+  return result.backlogCount <= Math.max(0, maxConsecutivePostpone);
+}
+
+export function penaltyLevelForBacklog(backlogCount: number) {
+  if (backlogCount <= 0) return 0;
+  return Math.min(3, Math.floor(backlogCount));
+}
+
+export function dateRange(start: string, end: string) {
+  const dates: string[] = [];
+  for (let date = start; date <= end; date = addStudyDaysLocal(date, 1)) dates.push(date);
+  return dates;
+}
+
+function applyCredit(obligations: Obligation[], lot: CreditLot, resolvedOn: string) {
+  for (const obligation of obligations) {
+    if (lot.credit <= EPSILON) break;
+    if (obligation.remaining <= EPSILON) continue;
+    const amount = Math.min(obligation.remaining, lot.credit);
+    obligation.remaining = normalize(obligation.remaining - amount);
+    lot.credit = normalize(lot.credit - amount);
+    obligation.result.remaining = obligation.remaining;
+    obligation.result.available = normalize(1 - obligation.remaining);
+    if (obligation.remaining <= EPSILON) {
+      obligation.result.state = "complete";
+      obligation.result.resolvedOn = resolvedOn;
+    }
+  }
+}
+
+function expireCarry(lots: CreditLot[], targetDate: string, maxCarryDays: number) {
+  for (const lot of lots) {
+    if (dayDistance(lot.earnedOn, targetDate) > maxCarryDays) lot.credit = 0;
+  }
+  cleanupCarry(lots);
+}
+
+function cleanupCarry(lots: CreditLot[]) {
+  for (let index = lots.length - 1; index >= 0; index -= 1) {
+    if (lots[index].credit <= EPSILON) lots.splice(index, 1);
+  }
+}
+
+function unresolvedState(date: string, currentDate: string, postponed: boolean): TimelineState {
+  if (postponed) return "postponed";
+  if (date === currentDate) return "in-progress";
+  return "missed";
+}
+
+function normalize(value: number) {
+  return Math.abs(value) <= EPSILON ? 0 : value;
+}
+
+function addStudyDaysLocal(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function dayDistance(from: string, to: string) {
+  return Math.floor((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
