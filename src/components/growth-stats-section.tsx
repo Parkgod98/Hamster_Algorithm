@@ -48,25 +48,30 @@ export function GrowthStatsSection({ month }: { month: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError("");
-    void (async () => {
-      const access = await accessToken();
-      if (!access) return;
-      const response = await fetch(`/api/growth-stats?month=${encodeURIComponent(month)}`, {
-        headers: { Authorization: `Bearer ${access}` },
-      });
-      const payload = await response.json() as { report?: GrowthReport; error?: string };
-      if (cancelled) return;
-      if (!response.ok || !payload.report) {
-        setError(payload.error ?? "풀이 성장 통계를 불러오지 못했습니다.");
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError("");
+      void (async () => {
+        const access = await accessToken();
+        if (!access || cancelled) return;
+        const response = await fetch(`/api/growth-stats?month=${encodeURIComponent(month)}`, {
+          headers: { Authorization: `Bearer ${access}` },
+        });
+        const payload = await response.json() as { report?: GrowthReport; error?: string };
+        if (cancelled) return;
+        if (!response.ok || !payload.report) {
+          setError(payload.error ?? "풀이 성장 통계를 불러오지 못했습니다.");
+          setLoading(false);
+          return;
+        }
+        setReport(payload.report);
         setLoading(false);
-        return;
-      }
-      setReport(payload.report);
-      setLoading(false);
-    })();
-    return () => { cancelled = true; };
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [month]);
 
   const maxPlatformCount = useMemo(() => Math.max(1, ...(report?.platformCounts.map((item) => item.count) ?? [1])), [report]);
