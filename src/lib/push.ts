@@ -89,10 +89,12 @@ async function beginDelivery(
         last_status_code: null,
       })
       .eq("id", existing.id)
+      .eq("status", existing.status)
+      .eq("attempt_count", existing.attempt_count)
       .select("id")
-      .single();
+      .maybeSingle();
     if (error) throw error;
-    return data.id as string;
+    return data?.id as string | undefined ?? null;
   }
 
   const { data, error } = await admin.from(DB.notificationDeliveries)
@@ -155,13 +157,14 @@ export async function sendStudyNotificationOnce(
       summary.attempted += 1;
       const result = await sendWithOneRetry(subscription, payload);
       if (result.ok) {
-        summary.sent += 1;
-        await admin.from(DB.notificationDeliveries).update({
+        const { error: sentError } = await admin.from(DB.notificationDeliveries).update({
           status: "sent",
           sent_at: new Date().toISOString(),
           last_error: null,
           last_status_code: result.statusCode,
         }).eq("id", deliveryId);
+        if (sentError) throw sentError;
+        summary.sent += 1;
         continue;
       }
 
