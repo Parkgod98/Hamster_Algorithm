@@ -1,1 +1,1 @@
-{"crons":[{"path":"/api/cron/finalize","schedule":"5 19 * * *"},{"path":"/api/cron/remind","schedule":"30 14 * * *"},{"path":"/api/cron/remind","schedule":"0 15 * * *"}]}
+{"crons":[{"path":"/api/cron/finalize","schedule":"5 19 * * *"},{"path":"/api/cron/remind","schedule":"30 14 * * *"},{"path":"/api/cron/remind","schedule":"30 15 * * *"},{"path":"/api/cron/remind","schedule":"30 16 * * *"},{"path":"/api/cron/remind","schedule":"30 17 * * *"},{"path":"/api/cron/remind","schedule":"30 18 * * *"}]}
