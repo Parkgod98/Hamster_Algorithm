@@ -1,1 +1,1 @@
-{"crons":[{"path":"/api/cron/finalize","schedule":"5 19 * * *"},{"path":"/api/cron/remind","schedule":"30 14 * * *"}]}
+{"crons":[{"path":"/api/cron/finalize","schedule":"5 19 * * *"},{"path":"/api/cron/remind","schedule":"30 14 * * *"},{"path":"/api/cron/remind","schedule":"0 15 * * *"}]}
