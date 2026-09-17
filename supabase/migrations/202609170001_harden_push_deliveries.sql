@@ -21,6 +21,6 @@ create index if not exists hamster_notification_deliveries_retry_idx
 on public.hamster_notification_deliveries(status,attempted_at)
 where status <> 'sent';
 
--- Existing rows were created by the first Push implementation before device-level
--- delivery tracking existed. Keep them as historical records only. New sends always
--- include subscription_id and use the device-level unique index above.
+-- Existing rows came from the first Push implementation before per-device delivery tracking.
+-- Keep them as historical records only. New sends always include subscription_id and use
+-- the per-device uniqueness rule above.
