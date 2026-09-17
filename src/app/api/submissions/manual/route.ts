@@ -34,7 +34,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "스터디 참여 전 날짜에는 등록할 수 없습니다." }, { status: 409 });
     }
 
-    const beforeState = await memberProgressForStudyDay(admin, studyId, user.id, currentStudyDate);
+    let beforeState: Awaited<ReturnType<typeof memberProgressForStudyDay>> | null = null;
+    try {
+      beforeState = await memberProgressForStudyDay(admin, studyId, user.id, currentStudyDate);
+    } catch (error) {
+      console.error("completion push pre-state lookup failed for manual submission", { studyId, userId: user.id, error });
+    }
+
     const { data: problem, error: problemError } = await admin
       .from(DB.problems)
       .upsert({
@@ -60,10 +66,17 @@ export async function POST(request: Request) {
     const { error } = await admin.from(DB.submissions).insert(rows);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const afterState = await memberProgressForStudyDay(admin, studyId, user.id, currentStudyDate);
-    if (shouldSendCompletion(beforeState, afterState)) {
-      await sendStudyNotificationOnce(admin, { studyId, userId: user.id, studyDate: currentStudyDate, kind: "completion" });
+    if (beforeState) {
+      try {
+        const afterState = await memberProgressForStudyDay(admin, studyId, user.id, currentStudyDate);
+        if (shouldSendCompletion(beforeState, afterState)) {
+          await sendStudyNotificationOnce(admin, { studyId, userId: user.id, studyDate: currentStudyDate, kind: "completion" });
+        }
+      } catch (notificationError) {
+        console.error("completion push failed after manual submission saved", { studyId, userId: user.id, error: notificationError });
+      }
     }
+
     return NextResponse.json({ ok: true, inserted: rows.length, studyDate: input.studyDate });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "unauthorized" }, { status: 401 });
