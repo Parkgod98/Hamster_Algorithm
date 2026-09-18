@@ -18,6 +18,21 @@ const UPPER_LABEL: Partial<Record<Platform, string>> = {
   SWEA: "D4 이상",
 };
 
+const GROWTH_CACHE_TTL_MS = 5 * 60 * 1000;
+type GrowthCacheEntry = { report: GrowthReport; fetchedAt: number };
+const growthReportCache = new Map<string, GrowthCacheEntry>();
+
+function growthCacheKey(userId: string, studyId: string, month: string) {
+  return `${userId}:${studyId}:${month}`;
+}
+
+export function invalidateGrowthStatsCache(userId: string, studyId: string) {
+  const prefix = `${userId}:${studyId}:`;
+  for (const key of growthReportCache.keys()) {
+    if (key.startsWith(prefix)) growthReportCache.delete(key);
+  }
+}
+
 async function accessToken() {
   const { data } = await browserSupabase().auth.getSession();
   return data.session?.access_token;
@@ -41,16 +56,29 @@ function platformSummary(platform: PlatformGrowth) {
   return `${difficulty} · ${UPPER_LABEL[platform.platform]} ${platform.upperRate}%`;
 }
 
-export function GrowthStatsSection({ month }: { month: string }) {
+export function GrowthStatsSection({ month, studyId, userId }: { month: string; studyId: string; userId: string }) {
   const [report, setReport] = useState<GrowthReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    const timer = window.setTimeout(() => {
+    const key = growthCacheKey(userId, studyId, month);
+    const cached = growthReportCache.get(key);
+    const fresh = cached && Date.now() - cached.fetchedAt < GROWTH_CACHE_TTL_MS;
+
+    if (cached) {
+      setReport(cached.report);
+      setLoading(false);
+      setError("");
+    } else {
+      setReport(null);
       setLoading(true);
       setError("");
+    }
+    if (fresh) return () => { cancelled = true; };
+
+    const timer = window.setTimeout(() => {
       void (async () => {
         const access = await accessToken();
         if (!access || cancelled) return;
@@ -60,11 +88,13 @@ export function GrowthStatsSection({ month }: { month: string }) {
         const payload = await response.json() as { report?: GrowthReport; error?: string };
         if (cancelled) return;
         if (!response.ok || !payload.report) {
-          setError(payload.error ?? "풀이 성장 통계를 불러오지 못했습니다.");
+          if (!cached) setError(payload.error ?? "풀이 성장 통계를 불러오지 못했습니다.");
           setLoading(false);
           return;
         }
+        growthReportCache.set(key, { report: payload.report, fetchedAt: Date.now() });
         setReport(payload.report);
+        setError("");
         setLoading(false);
       })();
     }, 0);
@@ -72,7 +102,7 @@ export function GrowthStatsSection({ month }: { month: string }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [month]);
+  }, [month, studyId, userId]);
 
   const maxPlatformCount = useMemo(() => Math.max(1, ...(report?.platformCounts.map((item) => item.count) ?? [1])), [report]);
 

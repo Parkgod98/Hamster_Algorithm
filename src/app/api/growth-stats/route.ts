@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
-import { buildGrowthReport, type GrowthSubmission } from "@/lib/growth-stats";
-import { studyDateFromTimestamp } from "@/lib/study-day";
+import { buildGrowthReport, shiftMonth, type GrowthSubmission } from "@/lib/growth-stats";
+import { studyDateFromTimestamp, studyDayStartTimestamp } from "@/lib/study-day";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 import type { Platform } from "@/lib/types";
 
@@ -39,11 +39,17 @@ export async function GET(request: Request) {
     if (membershipError) return NextResponse.json({ error: "study lookup failed" }, { status: 500 });
     if (!membership) return NextResponse.json({ report: buildGrowthReport([], month) });
 
+    const rangeStartMonth = shiftMonth(month, -2);
+    const rangeEndMonth = shiftMonth(month, 1);
+    const rangeStart = studyDayStartTimestamp(`${rangeStartMonth}-01`);
+    const rangeEndExclusive = studyDayStartTimestamp(`${rangeEndMonth}-01`);
     const { data: submissions, error } = await admin
       .from(DB.submissions)
       .select("solved_at,hamster_problems(platform,difficulty)")
       .eq("study_id", membership.study_id)
       .eq("user_id", user.id)
+      .gte("solved_at", rangeStart)
+      .lt("solved_at", rangeEndExclusive)
       .order("solved_at", { ascending: true });
     if (error) return NextResponse.json({ error: "submission lookup failed" }, { status: 500 });
 
