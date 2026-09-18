@@ -139,6 +139,7 @@ Rule Engine은 날짜별 상태를 독립적인 면제 여부로 보지 않고 `
 - GitHub webhook은 HMAC SHA-256 signature를 검증합니다.
 - GitHub App private key, Supabase service role key, VAPID private key는 서버 전용 환경변수입니다.
 - 사용자 API는 Supabase access token을 검증한 뒤 user id를 결정합니다.
+- 성장 통계 API는 요청자의 Study membership을 확인하고 대상 user가 같은 Study 멤버일 때만 submission을 조회합니다. service role을 사용하더라도 이 서버 권한 검증을 생략하지 않습니다.
 - Study rule 변경 API는 로그인 사용자가 해당 Study의 참여원인지 확인합니다.
 - Push endpoint/key는 server-only table에 저장하고 authenticated direct RLS policy를 열지 않습니다.
 - webhook payload는 필요한 최소 메타데이터만 DB에 저장합니다.

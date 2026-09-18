@@ -30,6 +30,8 @@ export async function GET(request: Request) {
     const admin = createAdminClient();
     const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
     const month = requestedMonth(request.url, currentStudyDate);
+    const targetUserId = new URL(request.url).searchParams.get("userId") || user.id;
+
     const { data: membership, error: membershipError } = await admin
       .from(DB.studyMembers)
       .select("study_id")
@@ -39,6 +41,15 @@ export async function GET(request: Request) {
     if (membershipError) return NextResponse.json({ error: "study lookup failed" }, { status: 500 });
     if (!membership) return NextResponse.json({ report: buildGrowthReport([], month) });
 
+    const { data: targetMembership, error: targetMembershipError } = await admin
+      .from(DB.studyMembers)
+      .select("user_id")
+      .eq("study_id", membership.study_id)
+      .eq("user_id", targetUserId)
+      .maybeSingle();
+    if (targetMembershipError) return NextResponse.json({ error: "member lookup failed" }, { status: 500 });
+    if (!targetMembership) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
     const rangeStartMonth = shiftMonth(month, -2);
     const rangeEndMonth = shiftMonth(month, 1);
     const rangeStart = studyDayStartTimestamp(`${rangeStartMonth}-01`);
@@ -47,7 +58,7 @@ export async function GET(request: Request) {
       .from(DB.submissions)
       .select("solved_at,hamster_problems(platform,difficulty)")
       .eq("study_id", membership.study_id)
-      .eq("user_id", user.id)
+      .eq("user_id", targetUserId)
       .gte("solved_at", rangeStart)
       .lt("solved_at", rangeEndExclusive)
       .order("solved_at", { ascending: true });
