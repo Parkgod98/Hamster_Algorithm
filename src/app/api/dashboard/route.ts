@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
-import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
+import { addStudyDays, studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 import { normalizeRuleConfig, submissionCredit } from "@/lib/rules";
 import { dateRange, evaluateTimelineByDay } from "@/lib/progress";
 import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "@/lib/rule-version";
@@ -82,24 +82,51 @@ export async function GET(request: Request) {
       maxConsecutivePostpone: study.max_consecutive_postpone, maxPresolveDays: study.max_presolve_days,
     };
 
-    const [membersResult, reposResult, subsResult, postponementsResult, penaltiesResult, versionsResult] = await Promise.all([
+    const versionsResult = await admin.from(DB.studyRuleVersions)
+      .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days,changed_by,created_at")
+      .eq("study_id", study.id)
+      .order("effective_from", { ascending: true });
+    const rawVersions = (versionsResult.error ? [] : versionsResult.data ?? []) as RuleVersionRow[];
+    const versions = normalizeRuleVersions(rawVersions, normalizeRuleConfig);
+    const monthDates = dateRange(bounds.start, bounds.end);
+    const maxCarry = Math.max(fallback.maxPresolveDays, ...versions.map((version) => version.maxPresolveDays), 0);
+    const evaluationEnd = bounds.end < addStudyDays(current, maxCarry) ? bounds.end : addStudyDays(current, maxCarry);
+
+    const [membersResult, reposResult, subsResult, postponementsResult, penaltiesResult] = await Promise.all([
       admin.from(DB.studyMembers).select("user_id,display_name,joined_at").eq("study_id", study.id).order("joined_at", { ascending: true }),
       admin.from(DB.repositoryConnections).select("id,full_name").eq("study_id", study.id).eq("user_id", user.id).eq("active", true),
-      admin.from(DB.submissions).select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)").eq("study_id", study.id).order("solved_at", { ascending: true }),
-      admin.from(DB.postponements).select("user_id,study_date,requested_at").eq("study_id", study.id),
-      admin.from(DB.penalties).select("user_id,amount,study_date,consecutive_misses").eq("study_id", study.id),
-      admin.from(DB.studyRuleVersions).select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days,changed_by,created_at").eq("study_id", study.id).order("effective_from", { ascending: true }),
+      admin.from(DB.submissions)
+        .select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)")
+        .eq("study_id", study.id)
+        .lt("solved_at", studyDayEndExclusiveTimestamp(evaluationEnd))
+        .order("solved_at", { ascending: true }),
+      admin.from(DB.postponements).select("user_id,study_date,requested_at").eq("study_id", study.id).lte("study_date", evaluationEnd),
+      admin.from(DB.penalties).select("user_id,amount,study_date,consecutive_misses").eq("study_id", study.id).gte("study_date", bounds.start).lte("study_date", bounds.end),
     ]);
 
     const memberRows = membersResult.data ?? [];
     const submissionRows = subsResult.data ?? [];
     const postponementRows = postponementsResult.data ?? [];
     const penaltyRows = penaltiesResult.data ?? [];
-    const rawVersions = (versionsResult.error ? [] : versionsResult.data ?? []) as RuleVersionRow[];
-    const versions = normalizeRuleVersions(rawVersions, normalizeRuleConfig);
-    const monthDates = dateRange(bounds.start, bounds.end);
-    const maxCarry = Math.max(fallback.maxPresolveDays, ...versions.map((version) => version.maxPresolveDays), 0);
-    const evaluationEnd = bounds.end < addStudyDays(current, maxCarry) ? bounds.end : addStudyDays(current, maxCarry);
+    const submissionsByUser = new Map<string, typeof submissionRows>();
+    for (const submission of submissionRows) {
+      const list = submissionsByUser.get(submission.user_id) ?? [];
+      list.push(submission);
+      submissionsByUser.set(submission.user_id, list);
+    }
+    const postponementsByUser = new Map<string, typeof postponementRows>();
+    for (const postponement of postponementRows) {
+      const list = postponementsByUser.get(postponement.user_id) ?? [];
+      list.push(postponement);
+      postponementsByUser.set(postponement.user_id, list);
+    }
+    const penaltiesByUser = new Map<string, typeof penaltyRows>();
+    for (const penalty of penaltyRows) {
+      const list = penaltiesByUser.get(penalty.user_id) ?? [];
+      list.push(penalty);
+      penaltiesByUser.set(penalty.user_id, list);
+    }
+
     const days = monthDates.map((date) => ({ date, members: [] as DayMember[] }));
     const dayMap = new Map(days.map((day) => [day.date, day]));
 
@@ -107,8 +134,7 @@ export async function GET(request: Request) {
       const joinedDate = studyDateFromTimestamp(member.joined_at);
       const creditMap = new Map<string, number>();
       const submissionsByDate = new Map<string, Array<Record<string, unknown>>>();
-      for (const submission of submissionRows) {
-        if (submission.user_id !== member.user_id) continue;
+      for (const submission of submissionsByUser.get(member.user_id) ?? []) {
         const problem = problemFromRelation(submission.hamster_problems);
         if (!problem) continue;
         const date = studyDateFromTimestamp(submission.solved_at);
@@ -120,10 +146,10 @@ export async function GET(request: Request) {
         submissionsByDate.set(date, list);
       }
 
-      const memberPostponements = postponementRows.filter((item) => item.user_id === member.user_id);
+      const memberPostponements = postponementsByUser.get(member.user_id) ?? [];
       const postponed = new Set(memberPostponements.map((item) => item.study_date));
       const requestedAtMap = new Map(memberPostponements.map((item) => [item.study_date, item.requested_at]));
-      const penaltyMap = new Map(penaltyRows.filter((item) => item.user_id === member.user_id)
+      const penaltyMap = new Map((penaltiesByUser.get(member.user_id) ?? [])
         .map((item) => [item.study_date, { amount: item.amount ?? 0, consecutiveMisses: item.consecutive_misses }]));
       const timelineMap = new Map<string, ReturnType<typeof evaluateTimelineByDay>[number]>();
       if (joinedDate <= evaluationEnd) {
