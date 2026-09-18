@@ -3,7 +3,11 @@ import { DB } from "@/lib/db";
 import { manualProblemExternalId, manualSolvedAt, normalizeManualSubmissionInput } from "@/lib/manual-submission";
 import { shouldSendCompletion } from "@/lib/notification-rules";
 import { sendStudyNotificationOnce } from "@/lib/push";
-import { memberProgressForStudyDay } from "@/lib/server-progress";
+import {
+  appendProgressSubmissions,
+  evaluateMemberProgress,
+  loadStudyProgressContext,
+} from "@/lib/server-progress";
 import { studyDateFromTimestamp } from "@/lib/study-day";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 
@@ -21,25 +25,15 @@ export async function POST(request: Request) {
     }
 
     const admin = createAdminClient();
-    const { data: membership } = await admin
-      .from(DB.studyMembers)
-      .select("study_id,joined_at")
-      .eq("study_id", studyId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!membership) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    const progressContext = await loadStudyProgressContext(admin, studyId, currentStudyDate, [user.id]);
+    const membership = progressContext?.members.get(user.id);
+    if (!progressContext || !membership) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
-    const joinedStudyDate = studyDateFromTimestamp(membership.joined_at);
-    if (input.studyDate < joinedStudyDate) {
+    if (input.studyDate < membership.joinedDate) {
       return NextResponse.json({ error: "스터디 참여 전 날짜에는 등록할 수 없습니다." }, { status: 409 });
     }
 
-    let beforeState: Awaited<ReturnType<typeof memberProgressForStudyDay>> | null = null;
-    try {
-      beforeState = await memberProgressForStudyDay(admin, studyId, user.id, currentStudyDate);
-    } catch (error) {
-      console.error("completion push pre-state lookup failed for manual submission", { studyId, userId: user.id, error });
-    }
+    const beforeState = evaluateMemberProgress(progressContext, user.id, currentStudyDate)?.state ?? null;
 
     const { data: problem, error: problemError } = await admin
       .from(DB.problems)
@@ -54,11 +48,12 @@ export async function POST(request: Request) {
     if (problemError) return NextResponse.json({ error: problemError.message }, { status: 500 });
 
     const batchId = crypto.randomUUID();
+    const solvedAt = manualSolvedAt(input.studyDate);
     const rows = Array.from({ length: input.count }, (_, index) => ({
       user_id: user.id,
       study_id: studyId,
       problem_id: problem.id,
-      solved_at: manualSolvedAt(input.studyDate),
+      solved_at: solvedAt,
       source: "manual" as const,
       source_event_id: `manual:${user.id}:${batchId}:${index + 1}`,
     }));
@@ -66,9 +61,15 @@ export async function POST(request: Request) {
     const { error } = await admin.from(DB.submissions).insert(rows);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    appendProgressSubmissions(progressContext, user.id, Array.from({ length: input.count }, () => ({
+      solvedAt,
+      platform: input.platform,
+      difficulty: input.difficulty,
+    })));
+
     if (beforeState) {
       try {
-        const afterState = await memberProgressForStudyDay(admin, studyId, user.id, currentStudyDate);
+        const afterState = evaluateMemberProgress(progressContext, user.id, currentStudyDate)?.state ?? "missed";
         if (shouldSendCompletion(beforeState, afterState)) {
           await sendStudyNotificationOnce(admin, { studyId, userId: user.id, studyDate: currentStudyDate, kind: "completion" });
         }
