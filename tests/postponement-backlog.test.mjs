@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   canPostponeWithBacklog,
   evaluateTimeline,
+  evaluateTimelineByDay,
   penaltyLevelForBacklog,
 } from "../src/lib/progress.ts";
 
@@ -73,4 +74,21 @@ test("오늘 미루기를 쓰면 상환 후 남은 현재 의무는 postponed로
   ], "2026-09-17");
   assert.deepEqual(timeline.map((item) => item.state), ["complete", "postponed", "postponed"]);
   assert.equal(timeline.at(-1).backlogCount, 2);
+});
+
+test("장기간 timeline도 FIFO와 선풀이 결과를 유지한다", () => {
+  const days = [];
+  const start = new Date("2025-01-01T00:00:00Z");
+  for (let index = 0; index < 730; index += 1) {
+    const date = new Date(start.getTime() + index * 86400000).toISOString().slice(0, 10);
+    days.push({
+      date,
+      credits: index % 11 === 0 ? 2 : index % 5 === 0 ? 0.5 : 1,
+      postponed: index % 37 === 0,
+    });
+  }
+  const timeline = evaluateTimelineByDay(days, days.at(-1).date, () => 2);
+  assert.equal(timeline.length, 730);
+  assert.ok(timeline.at(-1).backlogCount >= 0);
+  assert.ok(timeline.every((item) => item.remaining >= 0 && item.remaining <= 1));
 });

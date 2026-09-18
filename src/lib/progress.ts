@@ -12,7 +12,6 @@ export type TimelineResult = {
 type Obligation = {
   date: string;
   remaining: number;
-  postponed: boolean;
   result: TimelineResult;
 };
 
@@ -33,6 +32,37 @@ export function evaluateTimelineByDay(
   const obligations: Obligation[] = [];
   const carryLots: CreditLot[] = [];
   const results: TimelineResult[] = [];
+  let oldestUnresolvedIndex = 0;
+  let backlogCount = 0;
+
+  const advanceOldestUnresolved = () => {
+    while (
+      oldestUnresolvedIndex < obligations.length
+      && obligations[oldestUnresolvedIndex].remaining <= EPSILON
+    ) {
+      oldestUnresolvedIndex += 1;
+    }
+  };
+
+  const applyCredit = (lot: CreditLot, resolvedOn: string) => {
+    advanceOldestUnresolved();
+    while (lot.credit > EPSILON && oldestUnresolvedIndex < obligations.length) {
+      const obligation = obligations[oldestUnresolvedIndex];
+      const amount = Math.min(obligation.remaining, lot.credit);
+      obligation.remaining = normalize(obligation.remaining - amount);
+      lot.credit = normalize(lot.credit - amount);
+      obligation.result.remaining = obligation.remaining;
+      obligation.result.available = normalize(1 - obligation.remaining);
+
+      if (obligation.remaining <= EPSILON) {
+        obligation.result.state = "complete";
+        obligation.result.resolvedOn = resolvedOn;
+        backlogCount -= 1;
+        oldestUnresolvedIndex += 1;
+        advanceOldestUnresolved();
+      }
+    }
+  };
 
   for (const day of ordered) {
     const maxCarryDays = Math.max(0, maxCarryDaysForDate(day.date));
@@ -46,28 +76,23 @@ export function evaluateTimelineByDay(
       backlogCount: 0,
       resolvedOn: null,
     };
-    const obligation: Obligation = { date: day.date, remaining: 1, postponed: day.postponed, result };
-    obligations.push(obligation);
+    obligations.push({ date: day.date, remaining: 1, result });
     results.push(result);
+    backlogCount += 1;
 
     for (const lot of carryLots) {
       if (lot.credit <= EPSILON) continue;
-      applyCredit(obligations, lot, lot.earnedOn);
+      applyCredit(lot, lot.earnedOn);
     }
 
     if (day.credits > EPSILON) {
       const todayLot = { earnedOn: day.date, credit: day.credits };
-      applyCredit(obligations, todayLot, day.date);
+      applyCredit(todayLot, day.date);
       if (todayLot.credit > EPSILON) carryLots.push(todayLot);
     }
 
     cleanupCarry(carryLots);
-    for (const item of obligations) {
-      item.result.remaining = normalize(item.remaining);
-      item.result.available = normalize(1 - item.remaining);
-      if (item.remaining <= EPSILON) item.result.state = "complete";
-    }
-    result.backlogCount = obligations.filter((item) => item.remaining > EPSILON).length;
+    result.backlogCount = backlogCount;
   }
 
   return results;
@@ -87,22 +112,6 @@ export function dateRange(start: string, end: string) {
   const dates: string[] = [];
   for (let date = start; date <= end; date = addStudyDaysLocal(date, 1)) dates.push(date);
   return dates;
-}
-
-function applyCredit(obligations: Obligation[], lot: CreditLot, resolvedOn: string) {
-  for (const obligation of obligations) {
-    if (lot.credit <= EPSILON) break;
-    if (obligation.remaining <= EPSILON) continue;
-    const amount = Math.min(obligation.remaining, lot.credit);
-    obligation.remaining = normalize(obligation.remaining - amount);
-    lot.credit = normalize(lot.credit - amount);
-    obligation.result.remaining = obligation.remaining;
-    obligation.result.available = normalize(1 - obligation.remaining);
-    if (obligation.remaining <= EPSILON) {
-      obligation.result.state = "complete";
-      obligation.result.resolvedOn = resolvedOn;
-    }
-  }
 }
 
 function expireCarry(lots: CreditLot[], targetDate: string, maxCarryDays: number) {
