@@ -63,22 +63,22 @@ export function GrowthStatsSection({ month, studyId, userId }: { month: string; 
 
   useEffect(() => {
     let cancelled = false;
-    const key = growthCacheKey(userId, studyId, month);
-    const cached = growthReportCache.get(key);
-    const fresh = cached && Date.now() - cached.fetchedAt < GROWTH_CACHE_TTL_MS;
-
-    if (cached) {
-      setReport(cached.report);
-      setLoading(false);
-      setError("");
-    } else {
-      setReport(null);
-      setLoading(true);
-      setError("");
-    }
-    if (fresh) return () => { cancelled = true; };
-
     const timer = window.setTimeout(() => {
+      const key = growthCacheKey(userId, studyId, month);
+      const cached = growthReportCache.get(key);
+      const fresh = cached && Date.now() - cached.fetchedAt < GROWTH_CACHE_TTL_MS;
+
+      if (cached) {
+        setReport(cached.report);
+        setLoading(false);
+        setError("");
+      } else {
+        setReport(null);
+        setLoading(true);
+        setError("");
+      }
+      if (fresh || cancelled) return;
+
       void (async () => {
         const access = await accessToken();
         if (!access || cancelled) return;
@@ -98,6 +98,7 @@ export function GrowthStatsSection({ month, studyId, userId }: { month: string; 
         setLoading(false);
       })();
     }, 0);
+
     return () => {
       cancelled = true;
       window.clearTimeout(timer);

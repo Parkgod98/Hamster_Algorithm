@@ -11,6 +11,7 @@ import {
   type StudyProgressContext,
 } from "@/lib/server-progress";
 import { studyDateFromTimestamp } from "@/lib/study-day";
+import type { NotificationProgressState } from "@/lib/notification-rules";
 import { createAdminClient } from "@/lib/supabase";
 
 export async function POST(request: Request) {
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
 
   const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
   let progressContext: StudyProgressContext | null = null;
-  let beforeState: ReturnType<typeof evaluateMemberProgress>["state"] | null = null;
+  let beforeState: NotificationProgressState | null = null;
   try {
     progressContext = await loadStudyProgressContext(admin, connection.study_id, currentStudyDate, [connection.user_id]);
     beforeState = progressContext ? evaluateMemberProgress(progressContext, connection.user_id, currentStudyDate)?.state ?? null : null;
