@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { canPostponeWithBacklog } from "@/lib/progress";
-import { memberProgressSnapshot } from "@/lib/server-progress";
+import { evaluateMemberProgress, loadStudyProgressContext } from "@/lib/server-progress";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 import { studyDateFromTimestamp } from "@/lib/study-day";
 
@@ -16,20 +16,17 @@ export async function POST(request: Request) {
     const user = await requireUser(request);
     const { studyId } = await request.json() as { studyId?: string };
     if (!studyId) return NextResponse.json({ error: "studyId required" }, { status: 400 });
+
     const admin = createAdminClient();
-
-    const { data: study } = await admin.from(DB.studies).select("postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone").eq("id", studyId).single();
-    const { data: member } = await admin.from(DB.studyMembers).select("study_id").eq("study_id", studyId).eq("user_id", user.id).maybeSingle();
-    if (!study || !member) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-
     const current = studyDateFromTimestamp(new Date().toISOString());
-    const { data: existing } = await admin.from(DB.postponements)
-      .select("id")
-      .eq("study_id", studyId)
-      .eq("user_id", user.id)
-      .eq("study_date", current)
-      .maybeSingle();
-    if (existing) return NextResponse.json({ ok: true, duplicate: true });
+    const context = await loadStudyProgressContext(admin, studyId, current, [user.id]);
+    const member = context?.members.get(user.id);
+    if (!context || !member) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    const study = context.study;
+
+    if (context.postponementsByUser.get(user.id)?.has(current)) {
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
 
     const time = seoulParts();
     if (time.hour > study.postpone_deadline_hour || (time.hour === study.postpone_deadline_hour && time.minute > study.postpone_deadline_minute)) {
@@ -37,7 +34,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `미루기 신청 마감(${deadline})이 지났습니다.` }, { status: 409 });
     }
 
-    const progress = await memberProgressSnapshot(admin, studyId, user.id, current);
+    const progress = evaluateMemberProgress(context, user.id, current);
     if (!progress) return NextResponse.json({ error: "진행 상태를 계산하지 못했습니다." }, { status: 409 });
     if (progress.state === "complete") return NextResponse.json({ error: "오늘까지 필요한 인증을 이미 완료했습니다." }, { status: 409 });
     if (!canPostponeWithBacklog(progress, study.max_consecutive_postpone)) {

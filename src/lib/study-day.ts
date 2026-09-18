@@ -12,3 +12,13 @@ export function addStudyDays(date: string, days: number): string {
   const base = Date.parse(`${date}T00:00:00Z`);
   return new Date(base + days * DAY_MS).toISOString().slice(0, 10);
 }
+
+export function studyDayStartTimestamp(date: string, cutoffHour = 4): string {
+  const localMidnightUtc = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(localMidnightUtc)) throw new Error("Invalid study date");
+  return new Date(localMidnightUtc + cutoffHour * 60 * 60 * 1000 - SEOUL_OFFSET_MS).toISOString();
+}
+
+export function studyDayEndExclusiveTimestamp(date: string, cutoffHour = 4): string {
+  return studyDayStartTimestamp(addStudyDays(date, 1), cutoffHour);
+}

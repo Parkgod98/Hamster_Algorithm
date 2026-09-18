@@ -143,3 +143,18 @@ Rule Engine은 날짜별 상태를 독립적인 면제 여부로 보지 않고 `
 - Push endpoint/key는 server-only table에 저장하고 authenticated direct RLS policy를 열지 않습니다.
 - webhook payload는 필요한 최소 메타데이터만 DB에 저장합니다.
 - 공유 Supabase project의 다른 앱 object에는 Hamster migration이 접근하지 않습니다.
+
+
+## Runtime efficiency
+현재 규모에서는 별도 cache server나 집계 저장소를 두지 않고 요청 단위 재사용과 bounded query를 우선합니다.
+
+- 개인 풀이 성장 통계는 선택 월을 포함한 최근 3개월 Study Day 범위만 DB에서 읽고, 브라우저에서는 사용자/Study/월 단위로 5분간 결과를 재사용합니다.
+- 수동 인증과 backfill처럼 풀이 기록을 직접 변경한 경우 해당 사용자/Study의 성장 통계 cache를 즉시 무효화합니다.
+- 진행 상태 계산은 같은 요청 안에서 Study, 규칙 버전, 풀이, 미루기 context를 한 번 읽은 뒤 before/after 판정에 재사용합니다.
+- reminder cron은 멤버마다 DB를 다시 읽지 않고 Study 단위 context로 묶어서 계산하며, 활성 Push subscription이 없거나 reminder가 꺼져 있거나 현재 모든 기기에 이미 성공 전송된 사용자는 진행 상태 계산 전에 제외합니다.
+- Dashboard와 penalty finalize는 사용자별로 submission/postponement/penalty를 먼저 그룹핑해 전체 배열을 멤버 수만큼 반복 순회하지 않습니다.
+- Dashboard의 backlog 판정에 필요한 과거 이력은 유지하되 선택 화면 이후의 불필요한 미래 범위는 조회하지 않습니다.
+- FIFO progress engine은 가장 오래된 미해결 obligation pointer와 backlog count를 유지해 과거 obligation 전체를 날짜마다 다시 순회하지 않습니다.
+- Repository backfill은 GitHub commit detail 요청을 최대 8개 동시 처리하고, problem/submission은 page 단위 일괄 저장합니다.
+
+이 최적화는 Source of Truth나 도메인 판정 결과를 변경하지 않습니다. Redis, materialized view, 별도 worker/queue는 현재 범위에 포함하지 않습니다.

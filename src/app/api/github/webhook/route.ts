@@ -4,8 +4,14 @@ import { DB } from "@/lib/db";
 import { verifyGithubSignature } from "@/lib/github-app";
 import { shouldSendCompletion } from "@/lib/notification-rules";
 import { sendStudyNotificationOnce } from "@/lib/push";
-import { memberProgressForStudyDay } from "@/lib/server-progress";
+import {
+  appendProgressSubmissions,
+  evaluateMemberProgress,
+  loadStudyProgressContext,
+  type StudyProgressContext,
+} from "@/lib/server-progress";
 import { studyDateFromTimestamp } from "@/lib/study-day";
+import type { NotificationProgressState } from "@/lib/notification-rules";
 import { createAdminClient } from "@/lib/supabase";
 
 export async function POST(request: Request) {
@@ -27,9 +33,11 @@ export async function POST(request: Request) {
   if (!connection) return NextResponse.json({ ok: true, ignored: "unconnected repository" });
 
   const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
-  let beforeState: Awaited<ReturnType<typeof memberProgressForStudyDay>> | null = null;
+  let progressContext: StudyProgressContext | null = null;
+  let beforeState: NotificationProgressState | null = null;
   try {
-    beforeState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
+    progressContext = await loadStudyProgressContext(admin, connection.study_id, currentStudyDate, [connection.user_id]);
+    beforeState = progressContext ? evaluateMemberProgress(progressContext, connection.user_id, currentStudyDate)?.state ?? null : null;
   } catch (error) {
     console.error("completion push pre-state lookup failed", { deliveryId, error });
   }
@@ -40,14 +48,24 @@ export async function POST(request: Request) {
       const { data: problem, error: problemError } = await admin.from(DB.problems).upsert({ platform: submission.platform, external_id: submission.externalId, title: submission.title, difficulty: submission.difficulty }, { onConflict: "platform,external_id" }).select("id").single();
       if (problemError) return NextResponse.json({ error: problemError.message }, { status: 500 });
       const { error } = await admin.from(DB.submissions).insert({ user_id: connection.user_id, study_id: connection.study_id, repository_connection_id: connection.id, problem_id: problem.id, solved_at: submission.solvedAt, source: "github", source_event_id: submission.sourceEventId });
-      if (!error) inserted += 1;
-      else if (error.code !== "23505") return NextResponse.json({ error: error.message }, { status: 500 });
+      if (!error) {
+        inserted += 1;
+        if (progressContext) {
+          appendProgressSubmissions(progressContext, connection.user_id, [{
+            solvedAt: submission.solvedAt,
+            platform: submission.platform,
+            difficulty: submission.difficulty,
+          }]);
+        }
+      } else if (error.code !== "23505") {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
   }
 
-  if (inserted > 0 && beforeState) {
+  if (inserted > 0 && progressContext && beforeState) {
     try {
-      const afterState = await memberProgressForStudyDay(admin, connection.study_id, connection.user_id, currentStudyDate);
+      const afterState = evaluateMemberProgress(progressContext, connection.user_id, currentStudyDate)?.state ?? "missed";
       if (shouldSendCompletion(beforeState, afterState)) {
         await sendStudyNotificationOnce(admin, {
           studyId: connection.study_id,
