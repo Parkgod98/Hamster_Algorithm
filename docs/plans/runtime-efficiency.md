@@ -37,6 +37,11 @@
 - Backfill 동시성은 과도하게 높이지 않고 8개로 제한합니다.
 - 기능 변경이 아닌 성능 리팩터링이므로 기존 결과와 동일함을 테스트로 확인합니다.
 
+## 완료 상태
+- P0 1~5 구현 완료
+- P1 6~12 구현 완료
+- DB schema/migration 변경 없음
+
 ## 검증
 - 기존 Repository Harness 전체
 - FIFO backlog 회귀 테스트
