@@ -56,7 +56,23 @@ function platformSummary(platform: PlatformGrowth) {
   return `${difficulty} · ${UPPER_LABEL[platform.platform]} ${platform.upperRate}%`;
 }
 
-export function GrowthStatsSection({ month, studyId, userId }: { month: string; studyId: string; userId: string }) {
+type GrowthMember = { userId: string; name: string };
+
+export function GrowthStatsSection({
+  month,
+  studyId,
+  selectedUserId,
+  currentUserId,
+  members,
+  onSelectUser,
+}: {
+  month: string;
+  studyId: string;
+  selectedUserId: string;
+  currentUserId: string;
+  members: GrowthMember[];
+  onSelectUser: (userId: string) => void;
+}) {
   const [report, setReport] = useState<GrowthReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -64,7 +80,7 @@ export function GrowthStatsSection({ month, studyId, userId }: { month: string; 
   useEffect(() => {
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      const key = growthCacheKey(userId, studyId, month);
+      const key = growthCacheKey(selectedUserId, studyId, month);
       const cached = growthReportCache.get(key);
       const fresh = cached && Date.now() - cached.fetchedAt < GROWTH_CACHE_TTL_MS;
 
@@ -82,7 +98,8 @@ export function GrowthStatsSection({ month, studyId, userId }: { month: string; 
       void (async () => {
         const access = await accessToken();
         if (!access || cancelled) return;
-        const response = await fetch(`/api/growth-stats?month=${encodeURIComponent(month)}`, {
+        const params = new URLSearchParams({ month, userId: selectedUserId });
+        const response = await fetch(`/api/growth-stats?${params.toString()}`, {
           headers: { Authorization: `Bearer ${access}` },
         });
         const payload = await response.json() as { report?: GrowthReport; error?: string };
@@ -103,13 +120,28 @@ export function GrowthStatsSection({ month, studyId, userId }: { month: string; 
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [month, studyId, userId]);
+  }, [month, selectedUserId, studyId]);
 
   const maxPlatformCount = useMemo(() => Math.max(1, ...(report?.platformCounts.map((item) => item.count) ?? [1])), [report]);
+  const selectedMember = members.find((member) => member.userId === selectedUserId);
+  const selectedName = selectedMember?.name ?? "스터디원";
+  const heading = selectedUserId === currentUserId ? "내 풀이 성장" : `${selectedName}의 풀이 성장`;
 
   return <section className="growth-section">
     <div className="growth-heading">
-      <div><p className="eyebrow">SOLUTION GROWTH</p><h3>내 풀이 성장</h3><p>풀이량과 난이도 흐름을 플랫폼별로 봅니다. 난이도 상승을 곧바로 실력 점수로 환산하지 않습니다.</p></div>
+      <div><p className="eyebrow">SOLUTION GROWTH</p><h3>{heading}</h3><p>같은 스터디원의 풀이량과 난이도 흐름을 함께 봅니다. 난이도 상승을 곧바로 실력 점수로 환산하지 않습니다.</p></div>
+    </div>
+    <div className="growth-member-tabs" role="tablist" aria-label="풀이 성장 통계를 볼 스터디원">
+      {members.map((member) => <button
+        type="button"
+        role="tab"
+        aria-selected={member.userId === selectedUserId}
+        className={`growth-member-tab${member.userId === selectedUserId ? " is-active" : ""}`}
+        key={member.userId}
+        onClick={() => onSelectUser(member.userId)}
+      >
+        <span>{member.name}</span>{member.userId === currentUserId && <small>나</small>}
+      </button>)}
     </div>
     {loading ? <div className="growth-empty">풀이 기록을 집계하는 중…</div> : error ? <div className="growth-empty">{error}</div> : report ? <>
       <div className="growth-kpis">
