@@ -43,10 +43,10 @@ test("Push 상태 코드를 만료와 일시 실패로 구분한다", () => {
   assert.equal(isTransientPushFailure(400), false);
 });
 
-test("reminder는 서울 23시 30분 이후부터 Study Day 종료 전까지만 실행한다", () => {
-  assert.equal(isReminderWindow("2026-09-17T14:29:59.000Z"), false);
+test("reminder는 서울 21시 이후부터 Study Day 종료 전까지만 실행한다", () => {
+  assert.equal(isReminderWindow("2026-09-17T11:59:59.000Z"), false);
+  assert.equal(isReminderWindow("2026-09-17T12:00:00.000Z"), true);
   assert.equal(isReminderWindow("2026-09-17T14:30:00.000Z"), true);
-  assert.equal(isReminderWindow("2026-09-17T15:30:00.000Z"), true);
   assert.equal(isReminderWindow("2026-09-17T18:59:59.000Z"), true);
   assert.equal(isReminderWindow("2026-09-17T19:00:00.000Z"), false);
 });
