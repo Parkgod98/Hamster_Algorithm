@@ -202,11 +202,11 @@ export function PushNotificationControl() {
       <span>{deviceOn ? "이 기기 알림 켜짐" : "알림 켜기"}</span>
     </button>
     {open && <section className="push-control-panel">
-      <div className="push-control-heading"><div><strong>햄쮸터 알림</strong><p>인증 완료와 밤 11시 30분 이후 미인증 알림을 받을 수 있어요.</p></div><button onClick={() => setOpen(false)} aria-label="닫기">×</button></div>
+      <div className="push-control-heading"><div><strong>햄쮸터 알림</strong><p>인증 완료와 밤 9시 이후 미인증 알림을 받을 수 있어요.</p></div><button onClick={() => setOpen(false)} aria-label="닫기">×</button></div>
       {needsInstall && <p className="push-help">iPhone은 Safari에서 햄쮸터를 홈 화면에 추가한 뒤 앱으로 열어야 Push 알림을 사용할 수 있어요.</p>}
       {!deviceOn ? <button className="primary-button full" onClick={() => void enable()} disabled={busy || !settings}>{busy ? "설정 중…" : "이 기기 알림 켜기"}</button> : <>
         <label className="push-option"><span><strong>인증 완료</strong><small>오늘 인증이 완료되는 순간 알려줘요.</small></span><input type="checkbox" checked={settings?.completionEnabled ?? true} onChange={(event) => void savePreference("completionEnabled", event.target.checked)}/></label>
-        <label className="push-option"><span><strong>미인증 reminder</strong><small>23:30 이후에도 미완료이고 미루기도 안 했다면 알려줘요.</small></span><input type="checkbox" checked={settings?.reminderEnabled ?? true} onChange={(event) => void savePreference("reminderEnabled", event.target.checked)}/></label>
+        <label className="push-option"><span><strong>미인증 reminder</strong><small>밤 9시 이후에도 미완료이고 미루기도 안 했다면 알려줘요.</small></span><input type="checkbox" checked={settings?.reminderEnabled ?? true} onChange={(event) => void savePreference("reminderEnabled", event.target.checked)}/></label>
         <button className="secondary-button full push-test" onClick={() => void testPush()} disabled={busy}>{busy ? "확인 중…" : "테스트 알림 보내기"}</button>
         <button className="text-button push-disable" onClick={() => void disable()} disabled={busy}>이 기기 알림 끄기</button>
       </>}
