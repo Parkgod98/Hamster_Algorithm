@@ -49,6 +49,11 @@ function deltaLabel(delta: number) {
   return "전월과 동일";
 }
 
+function formatDay(date: string) {
+  const [, month, day] = date.split("-");
+  return `${Number(month)}/${Number(day)}`;
+}
+
 function platformSummary(platform: PlatformGrowth) {
   if (!platform.count) return "아직 풀이 없음";
   if (platform.platform === "CODETREE") return `${platform.count}문제`;
@@ -123,6 +128,7 @@ export function GrowthStatsSection({
   }, [month, selectedUserId, studyId]);
 
   const maxPlatformCount = useMemo(() => Math.max(1, ...(report?.platformCounts.map((item) => item.count) ?? [1])), [report]);
+  const maxDailyCount = useMemo(() => Math.max(1, ...(report?.daily.map((item) => item.total) ?? [1])), [report]);
   const selectedMember = members.find((member) => member.userId === selectedUserId);
   const selectedName = selectedMember?.name ?? "스터디원";
   const heading = selectedUserId === currentUserId ? "내 풀이 성장" : `${selectedName}의 풀이 성장`;
@@ -162,6 +168,17 @@ export function GrowthStatsSection({
           <div className="growth-months">{report.recentMonths.map((item) => <div key={item.month}><span>{formatMonth(item.month)}</span><strong>{item.total}</strong><small>문제</small></div>)}</div>
         </article>
       </div>
+
+      <article className="growth-card growth-daily-card">
+        <div className="growth-card-title"><strong>최근 14일 풀이량</strong><span>Study Day 기준 · 플랫폼 합산</span></div>
+        <div className="growth-daily-chart" aria-label="최근 14일 일별 풀이량">
+          {report.daily.map((item) => <div className="growth-daily-column" key={item.date} title={`${item.date} · ${item.total}문제`}>
+            <strong>{item.total}</strong>
+            <div className="growth-daily-track"><i style={{ height: item.total ? `${Math.max(8, Math.round((item.total / maxDailyCount) * 100))}%` : "0%" }}/></div>
+            <span>{formatDay(item.date)}</span>
+          </div>)}
+        </div>
+      </article>
 
       <div className="growth-platforms">{report.platforms.map((platform) => <article className="growth-platform-card" key={platform.platform}>
         <div className="growth-platform-head"><div><strong>{PLATFORM_LABEL[platform.platform]}</strong><span>{platformSummary(platform)}</span></div><b>{platform.count}문제</b></div>
