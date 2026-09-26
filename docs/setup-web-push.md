@@ -33,11 +33,11 @@ VAPID key를 교체하면 기존 브라우저 subscription이 이전 application
 
 ## 5. reminder 동작 시간
 - 인증 완료: 자동/수동 풀이 반영으로 현재 Study Day가 처음 완료되는 순간
-- 미인증 reminder primary: `30 14 * * *` UTC
-- 미인증 reminder backup: `0 15 * * *` UTC
+- 미인증 reminder cron: `0 12 * * *`, `0 13 * * *`, `0 15 * * *`, `0 17 * * *`, `0 18 * * *` UTC
+  - KST 기준 21시, 22시, 00시, 02시, 03시 실행 요청
 - Study Day 종료/벌금 확정: 기존 `5 19 * * *` UTC
 
-Vercel Hobby Cron은 일 단위 작업을 분 단위 정각으로 보장하지 않습니다. 따라서 primary와 backup을 함께 등록하고 서버에서 23:30 KST 이전 실행은 차단합니다. 이미 해당 Study Day에 특정 기기로 성공한 reminder는 backup 실행에서 중복 전송하지 않습니다. 실패한 기기는 다시 시도할 수 있습니다.
+Vercel Hobby Cron의 정각 실행 여부에 의존하지 않습니다. 서버는 21:00 KST 이후부터 Study Day 종료 전까지만 reminder를 허용하고, 이 시간대에 cron 호출이 들어오면 즉시 미인증 여부를 판정해 전송합니다. 여러 cron을 backup으로 두되 이미 해당 Study Day에 특정 기기로 성공한 reminder는 중복 전송하지 않고 실패하거나 아직 보내지 못한 기기만 다시 시도합니다.
 
 ## 6. 실패 처리
 - 실제 Push 성공 후에만 delivery 상태를 `sent`로 확정합니다.

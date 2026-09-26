@@ -33,8 +33,7 @@ export function isExpiredPushSubscription(statusCode: number) {
 export function isReminderWindow(iso: string) {
   const seoul = new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000);
   const hour = seoul.getUTCHours();
-  const minute = seoul.getUTCMinutes();
-  return (hour === 23 && minute >= 30) || hour === 0 || hour === 1 || hour === 2 || hour === 3;
+  return hour >= 21 || hour < 4;
 }
 
 export const NOTIFICATION_COPY = {

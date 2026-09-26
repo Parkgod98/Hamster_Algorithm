@@ -122,7 +122,7 @@ Rule Engine은 날짜별 상태를 독립적인 면제 여부로 보지 않고 `
 - 브라우저는 Service Worker의 `PushManager`로 subscription을 만들고 인증 API `/api/push/subscriptions`를 통해 서버에 저장합니다.
 - VAPID public key만 client에 전달하며 private key는 서버 환경변수로 유지합니다.
 - GitHub webhook과 수동 인증 API는 제출 전/후 현재 Study Day 상태를 계산하고 backlog와 오늘 obligation이 모두 해결되어 `미완료 → 완료` 전환일 때만 completion Push를 요청합니다.
-- `/api/cron/remind`는 reminder delivery window에 실행하고 현재 Study Day까지 미해결 obligation이 남으면서 오늘 postpone을 사용하지 않은 사용자에게만 발송합니다.
+- `/api/cron/remind`는 21:00 KST 이후 Study Day 종료 전 delivery window에서 호출되는 즉시 현재 Study Day까지 미해결 obligation이 남으면서 오늘 postpone을 사용하지 않은 사용자에게만 발송합니다. 여러 backup cron이 호출되어도 성공 delivery는 기기 단위로 중복 전송하지 않습니다.
 - Push 실패는 풀이 저장을 실패시키지 않고 delivery 상태를 통해 재시도합니다.
 - 404/410을 반환하는 만료 endpoint는 전송 시 제거합니다.
 - iPhone은 홈 화면에 설치한 PWA에서 사용자 gesture로 알림 권한을 허용해야 합니다.
