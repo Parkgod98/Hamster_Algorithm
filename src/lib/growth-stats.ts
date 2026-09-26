@@ -34,6 +34,11 @@ export type WeeklyGrowth = {
   }>;
 };
 
+export type DailyGrowthPoint = {
+  date: string;
+  total: number;
+};
+
 export type MonthlyGrowthPoint = {
   month: string;
   total: number;
@@ -56,6 +61,7 @@ export type GrowthReport = {
   platformCounts: Array<{ platform: Platform; count: number }>;
   platforms: PlatformGrowth[];
   weekly: WeeklyGrowth[];
+  daily: DailyGrowthPoint[];
   recentMonths: MonthlyGrowthPoint[];
 };
 
@@ -138,6 +144,27 @@ function aggregatePlatform(rows: GrowthSubmission[], platform: Platform): Platfo
   };
 }
 
+function addDays(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function monthEndDate(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+}
+
+function dailySeries(rows: GrowthSubmission[], month: string, referenceStudyDate?: string): DailyGrowthPoint[] {
+  const end = referenceStudyDate?.startsWith(month) ? referenceStudyDate : monthEndDate(month);
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.studyDate, (counts.get(row.studyDate) ?? 0) + 1);
+  return Array.from({ length: 14 }, (_, index) => {
+    const date = addDays(end, index - 13);
+    return { date, total: counts.get(date) ?? 0 };
+  });
+}
+
 function aggregateMonth(rows: GrowthSubmission[], month: string): MonthlyGrowthPoint {
   const inMonth = rows.filter((row) => row.studyDate.startsWith(month));
   return {
@@ -156,7 +183,7 @@ function aggregateMonth(rows: GrowthSubmission[], month: string): MonthlyGrowthP
   };
 }
 
-export function buildGrowthReport(rows: GrowthSubmission[], month: string): GrowthReport {
+export function buildGrowthReport(rows: GrowthSubmission[], month: string, referenceStudyDate?: string): GrowthReport {
   const currentRows = rows.filter((row) => row.studyDate.startsWith(month));
   const previousMonth = shiftMonth(month, -1);
   const previousRows = rows.filter((row) => row.studyDate.startsWith(previousMonth));
@@ -179,6 +206,7 @@ export function buildGrowthReport(rows: GrowthSubmission[], month: string): Grow
     };
   });
   const recentMonths = [shiftMonth(month, -2), previousMonth, month].map((target) => aggregateMonth(rows, target));
+  const daily = dailySeries(rows, month, referenceStudyDate);
   return {
     month,
     total: currentRows.length,
@@ -189,6 +217,7 @@ export function buildGrowthReport(rows: GrowthSubmission[], month: string): Grow
     platformCounts: platforms.map(({ platform, count }) => ({ platform, count })),
     platforms,
     weekly: weeks,
+    daily,
     recentMonths,
   };
 }

@@ -39,7 +39,7 @@ export async function GET(request: Request) {
       .limit(1)
       .maybeSingle();
     if (membershipError) return NextResponse.json({ error: "study lookup failed" }, { status: 500 });
-    if (!membership) return NextResponse.json({ report: buildGrowthReport([], month) });
+    if (!membership) return NextResponse.json({ report: buildGrowthReport([], month, currentStudyDate) });
 
     const { data: targetMembership, error: targetMembershipError } = await admin
       .from(DB.studyMembers)
@@ -75,7 +75,7 @@ export async function GET(request: Request) {
       });
     }
 
-    return NextResponse.json({ report: buildGrowthReport(rows, month) });
+    return NextResponse.json({ report: buildGrowthReport(rows, month, currentStudyDate) });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });

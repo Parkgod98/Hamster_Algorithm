@@ -14,6 +14,7 @@
 ## 통계 구성
 - 선택한 달 총 풀이 수, 전월 대비 증감
 - 활동일 수, 풀이한 날 평균 문제 수
+- 최근 14일 일별 풀이 수 막대 차트
 - 플랫폼별 풀이 수
 - 플랫폼별 난이도 분포
 - BOJ 최고 난이도
@@ -23,7 +24,7 @@
 상위 난이도 기준은 현재 스터디 규칙의 기본 구간과 맞춰 BOJ Gold 이상, Programmers Lv.2 이상, SWEA D4 이상으로 둡니다.
 
 ## 구현
-- `src/lib/growth-stats.ts`: 난이도 정규화/순서/월·주 집계 순수 함수
+- `src/lib/growth-stats.ts`: 난이도 정규화/순서/월·주·최근 14일 일별 집계 순수 함수
 - `src/app/api/growth-stats/route.ts`: 현재 사용자 풀이 통계 API
 - `src/components/growth-stats-section.tsx`: 통계 탭 개인 풀이 성장 UI
 - `src/components/dashboard.tsx`: 기존 스터디 통계 아래 성장 영역 연결
