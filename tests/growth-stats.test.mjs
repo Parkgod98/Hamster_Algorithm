@@ -34,6 +34,8 @@ test("선택한 달의 풀이 수, 활동일, 전월 비교와 난이도 분포�
   assert.equal(report.delta, 4);
   assert.equal(report.activeDays, 3);
   assert.equal(report.averagePerActiveDay, 1.7);
+  assert.equal(report.daily.length, 14);
+  assert.equal(report.daily.at(-1)?.date, "2026-09-30");
 
   const boj = report.platforms.find((item) => item.platform === "BOJ");
   assert.equal(boj?.count, 2);
@@ -44,6 +46,22 @@ test("선택한 달의 풀이 수, 활동일, 전월 비교와 난이도 분포�
   const codetree = report.platforms.find((item) => item.platform === "CODETREE");
   assert.equal(codetree?.averageRank, null);
   assert.equal(codetree?.highestDifficulty, null);
+});
+
+test("현재 월은 현재 Study Day를 끝점으로 최근 14일 일별 풀이량을 만든다", () => {
+  const report = buildGrowthReport([
+    { studyDate: "2026-09-12", platform: "BOJ", difficulty: "Silver III" },
+    { studyDate: "2026-09-25", platform: "BOJ", difficulty: "Gold V" },
+    { studyDate: "2026-09-25", platform: "PROGRAMMERS", difficulty: "Level 2" },
+    { studyDate: "2026-09-26", platform: "SWEA", difficulty: "D4" },
+  ], "2026-09", "2026-09-26");
+
+  assert.equal(report.daily.length, 14);
+  assert.equal(report.daily[0].date, "2026-09-13");
+  assert.equal(report.daily.at(-1)?.date, "2026-09-26");
+  assert.equal(report.daily.find((item) => item.date === "2026-09-25")?.total, 2);
+  assert.equal(report.daily.find((item) => item.date === "2026-09-26")?.total, 1);
+  assert.equal(report.daily.find((item) => item.date === "2026-09-24")?.total, 0);
 });
 
 test("주간 평균 난이도는 플랫폼별로 따로 계산한다", () => {
