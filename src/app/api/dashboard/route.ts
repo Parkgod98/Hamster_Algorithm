@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
-import { addStudyDays, studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
+import { addStudyDays, studyDateFromTimestamp, studyDayStartTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 import { normalizeRuleConfig, submissionCredit } from "@/lib/rules";
 import { dateRange, evaluateTimelineByDay } from "@/lib/progress";
 import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "@/lib/rule-version";
@@ -10,9 +10,11 @@ import { readAllRows } from "@/lib/read-all-rows";
 import type { Platform } from "@/lib/types";
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
-type ProblemRow = { platform: Platform; external_id: string; title: string; difficulty: string };
+type CreditProblem = { platform: Platform; difficulty: string };
+type ProblemRow = CreditProblem & { external_id: string; title: string };
 type MemberRow = { user_id: string; display_name: string; joined_at: string };
-type SubmissionRow = { user_id: string; solved_at: string; source: string; hamster_problems: unknown };
+type CreditRow = { user_id: string; solved_at: string; hamster_problems: unknown };
+type SubmissionRow = CreditRow & { source: string };
 type PostponementRow = { user_id: string; study_date: string; requested_at: string };
 type PenaltyRow = { user_id: string; amount: number | null; study_date: string; consecutive_misses: number };
 type RepoRow = { id: string; full_name: string };
@@ -39,10 +41,10 @@ function monthBounds(month: string) {
   const [year, monthNumber] = month.split("-").map(Number);
   return { start: `${month}-01`, end: new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10) };
 }
-function problemFromRelation(value: unknown): ProblemRow | null {
-  if (Array.isArray(value)) return (value[0] as ProblemRow | undefined) ?? null;
-  if (value && typeof value === "object") return value as ProblemRow;
-  return null;
+function problemFromRelation<T extends CreditProblem>(value: unknown): T {
+  const problem = Array.isArray(value) ? value[0] : value;
+  if (!problem || typeof problem !== "object") throw new Error("Submission problem missing");
+  return problem as T;
 }
 function groupByUser<T extends { user_id: string }>(rows: T[]) {
   const groups = new Map<string, T[]>();
@@ -100,34 +102,49 @@ export async function GET(request: Request) {
       postponeDeadlineHour: study.postpone_deadline_hour, postponeDeadlineMinute: study.postpone_deadline_minute,
       maxConsecutivePostpone: study.max_consecutive_postpone, maxPresolveDays: study.max_presolve_days,
     };
-    const rawVersions = await readAllRows<RuleVersionRow>((from, to) => admin.from(DB.studyRuleVersions)
-      .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days,changed_by,created_at")
-      .eq("study_id", study.id).lte("effective_from", current)
-      .order("effective_from", { ascending: true }).range(from, to));
+    const [rawVersions, memberRows, repos, penaltyRows] = await Promise.all([
+      readAllRows<RuleVersionRow>((from, to) => admin.from(DB.studyRuleVersions)
+        .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days,changed_by,created_at")
+        .eq("study_id", study.id).lte("effective_from", current)
+        .order("effective_from", { ascending: true }).range(from, to)),
+      readAllRows<MemberRow>((from, to) => admin.from(DB.studyMembers).select("user_id,display_name,joined_at")
+        .eq("study_id", study.id).order("joined_at", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
+      readAllRows<RepoRow>((from, to) => admin.from(DB.repositoryConnections).select("id,full_name")
+        .eq("study_id", study.id).eq("user_id", user.id).eq("active", true).order("id", { ascending: true }).range(from, to)),
+      readAllRows<PenaltyRow>((from, to) => admin.from(DB.penalties).select("user_id,amount,study_date,consecutive_misses")
+        .eq("study_id", study.id).gte("study_date", bounds.start).lte("study_date", bounds.end)
+        .order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
+    ]);
     const versions = normalizeRuleVersions(rawVersions, normalizeRuleConfig);
     const currentRules = rulesForDate(versions, current, fallback);
     const monthDates = dateRange(bounds.start, bounds.end);
     const maxCarry = Math.max(fallback.maxPresolveDays, ...versions.map((version) => version.maxPresolveDays), 0);
     const futureEnd = addStudyDays(current, maxCarry);
-    // Always replay through today, even for an old month: later repayments change old icons.
+    // Later repayments must update old-month icons. Never truncate the FIFO input to the visible month.
     const evaluationEnd = bounds.end < current ? current : bounds.end < futureEnd ? bounds.end : futureEnd;
-    const [memberRows, repos, submissionRows, postponementRows, penaltyRows] = await Promise.all([
-      readAllRows<MemberRow>((from, to) => admin.from(DB.studyMembers).select("user_id,display_name,joined_at")
-        .eq("study_id", study.id).order("joined_at", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
-      readAllRows<RepoRow>((from, to) => admin.from(DB.repositoryConnections).select("id,full_name")
-        .eq("study_id", study.id).eq("user_id", user.id).eq("active", true).order("id", { ascending: true }).range(from, to)),
-      readAllRows<SubmissionRow>((from, to) => admin.from(DB.submissions)
+    const memberIds = memberRows.map((member) => member.user_id);
+    const earliestJoined = memberRows.map((member) => studyDateFromTimestamp(member.joined_at)).sort()[0];
+    const progressStart = earliestJoined ? studyDayStartTimestamp(earliestJoined) : "";
+    const detailStart = earliestJoined && earliestJoined > bounds.start ? earliestJoined : bounds.start;
+    const detailEnd = bounds.end < current ? bounds.end : current;
+    const [creditRows, detailRows, postponementRows] = await Promise.all([
+      earliestJoined && earliestJoined <= current ? readAllRows<CreditRow>((from, to) => admin.from(DB.submissions)
+        .select("user_id,solved_at,hamster_problems(platform,difficulty)")
+        .eq("study_id", study.id).in("user_id", memberIds)
+        .gte("solved_at", progressStart).lt("solved_at", studyDayEndExclusiveTimestamp(current))
+        .order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to)) : Promise.resolve([]),
+      memberIds.length && detailStart <= detailEnd ? readAllRows<SubmissionRow>((from, to) => admin.from(DB.submissions)
         .select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)")
-        .eq("study_id", study.id).lt("solved_at", studyDayEndExclusiveTimestamp(current))
-        .order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to)),
-      readAllRows<PostponementRow>((from, to) => admin.from(DB.postponements).select("user_id,study_date,requested_at")
-        .eq("study_id", study.id).lte("study_date", current)
-        .order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
-      readAllRows<PenaltyRow>((from, to) => admin.from(DB.penalties).select("user_id,amount,study_date,consecutive_misses")
-        .eq("study_id", study.id).gte("study_date", bounds.start).lte("study_date", bounds.end)
-        .order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
+        .eq("study_id", study.id).in("user_id", memberIds)
+        .gte("solved_at", studyDayStartTimestamp(detailStart)).lt("solved_at", studyDayEndExclusiveTimestamp(detailEnd))
+        .order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to)) : Promise.resolve([]),
+      earliestJoined && earliestJoined <= current ? readAllRows<PostponementRow>((from, to) => admin.from(DB.postponements)
+        .select("user_id,study_date,requested_at").eq("study_id", study.id).in("user_id", memberIds)
+        .gte("study_date", earliestJoined).lte("study_date", current)
+        .order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to)) : Promise.resolve([]),
     ]);
-    const submissionsByUser = groupByUser(submissionRows);
+    const creditsByUser = groupByUser(creditRows);
+    const detailsByUser = groupByUser(detailRows);
     const postponementsByUser = groupByUser(postponementRows);
     const penaltiesByUser = groupByUser(penaltyRows);
     const days = monthDates.map((date) => ({ date, members: [] as DayMember[] }));
@@ -137,14 +154,18 @@ export async function GET(request: Request) {
       const joinedDate = studyDateFromTimestamp(member.joined_at);
       const creditMap = new Map<string, number>();
       const submissionsByDate = new Map<string, Array<Record<string, unknown>>>();
-      for (const submission of submissionsByUser.get(member.user_id) ?? []) {
-        const problem = problemFromRelation(submission.hamster_problems);
-        if (!problem) throw new Error("Submission problem missing");
+      for (const submission of creditsByUser.get(member.user_id) ?? []) {
         const date = studyDateFromTimestamp(submission.solved_at);
         if (date < joinedDate) continue;
+        const problem = problemFromRelation<CreditProblem>(submission.hamster_problems);
         const credit = submissionCredit(problem.platform, problem.difficulty, rulesForDate(versions, date, fallback).ruleConfig);
         creditMap.set(date, (creditMap.get(date) ?? 0) + credit);
-        if (date < bounds.start || date > bounds.end) continue;
+      }
+      for (const submission of detailsByUser.get(member.user_id) ?? []) {
+        const date = studyDateFromTimestamp(submission.solved_at);
+        if (date < joinedDate) continue;
+        const problem = problemFromRelation<ProblemRow>(submission.hamster_problems);
+        const credit = submissionCredit(problem.platform, problem.difficulty, rulesForDate(versions, date, fallback).ruleConfig);
         const list = submissionsByDate.get(date) ?? [];
         list.push({ platform: problem.platform, problemId: problem.external_id, title: problem.title, difficulty: problem.difficulty,
           credit, solvedAt: submission.solved_at, source: submission.source });
