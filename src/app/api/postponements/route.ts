@@ -70,7 +70,7 @@ async function handle(request: Request, write: boolean) {
     const { error } = await admin.from(DB.postponements).insert({ study_id: input.studyId, user_id: user.id, study_date: current });
     if (error && error.code !== "23505") {
       console.error("postponement insert failed", { code: error.code });
-      return json({ error: "ミ루기를 저장하지 못했어요. 잠시 후 다시 확인해주세요.".replace("ミ", "미") }, 503);
+      return json({ error: "미루기를 저장하지 못했어요. 잠시 후 다시 확인해주세요." }, 503);
     }
     const savedStatus: PostponementStatus = { ...status, canPostpone: false, alreadyPostponed: true,
       reason: "already-postponed", message: "이미 오늘 미루기를 신청했어요." };
