@@ -94,8 +94,8 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
     const compiled = ts.transpileModule(source, { fileName: absolute, compilerOptions: {
       module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
     } }).outputText;
-    const module = { exports: {} };
-    modules.set(absolute, module);
+    const loadedModule = { exports: {} };
+    modules.set(absolute, loadedModule);
     const scopedRequire = (name) => {
       if (name === "@/lib/supabase") return auth;
       if (name === "@/lib/supabase-browser") return { browserSupabase: () => { throw new Error("Browser I/O in server test"); } };
@@ -109,8 +109,8 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
     };
     new vm.Script(`(function(exports, require, module) { ${compiled}\n})`, { filename: absolute }).runInNewContext({
       Date: TestDate, Error, Request, Response, Headers, URL, URLSearchParams, console, setTimeout, clearTimeout,
-    })(module.exports, scopedRequire, module);
-    return module.exports;
+    })(loadedModule.exports, scopedRequire, loadedModule);
+    return loadedModule.exports;
   }
   async function request(method, body, { user = "alice", url = "/api/postponements", route = "src/app/api/postponements/route.ts" } = {}) {
     const handler = load(route)[method];
