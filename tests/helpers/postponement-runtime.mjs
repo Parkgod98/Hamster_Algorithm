@@ -29,13 +29,14 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
     static now() { return clock; }
   }
   class Query {
-    constructor(table) { this.table = table; this.filters = []; this.orders = []; this.mode = "select"; }
-    select() { return this; }
-    eq(key, value) { this.filters.push((row) => row[key] === value); return this; }
-    in(key, values) { this.filters.push((row) => values.includes(row[key])); return this; }
-    lt(key, value) { this.filters.push((row) => row[key] < value); return this; }
-    lte(key, value) { this.filters.push((row) => row[key] <= value); return this; }
-    gte(key, value) { this.filters.push((row) => row[key] >= value); return this; }
+    constructor(table) { this.table = table; this.filters = []; this.conditions = []; this.orders = []; this.mode = "select"; }
+    select(columns = "*") { this.columns = columns; return this; }
+    filter(op, key, value, predicate) { this.conditions.push({ op, key, value }); this.filters.push(predicate); return this; }
+    eq(key, value) { return this.filter("eq", key, value, (row) => row[key] === value); }
+    in(key, values) { return this.filter("in", key, values, (row) => values.includes(row[key])); }
+    lt(key, value) { return this.filter("lt", key, value, (row) => row[key] < value); }
+    lte(key, value) { return this.filter("lte", key, value, (row) => row[key] <= value); }
+    gte(key, value) { return this.filter("gte", key, value, (row) => row[key] >= value); }
     order(key, options = {}) { this.orders.push([key, options.ascending !== false]); return this; }
     limit(size) { this.size = size; return this; }
     range(from, to) { this.from = from; this.to = to; return this; }
@@ -44,7 +45,8 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
     insert(rows) { this.mode = "insert"; this.input = Array.isArray(rows) ? rows : [rows]; return this; }
     then(resolve, reject) { return Promise.resolve().then(() => this.execute()).then(resolve, reject); }
     execute() {
-      state.queries.push({ table: this.table, mode: this.mode, from: this.from ?? 0, to: this.to });
+      const record = { table: this.table, mode: this.mode, from: this.from ?? 0, to: this.to, columns: this.columns, conditions: this.conditions, orders: this.orders };
+      state.queries.push(record);
       const failure = state.failures.find((item) => item.table === this.table && (!item.mode || item.mode === this.mode)
         && (item.from === undefined || item.from === (this.from ?? 0)));
       if (failure) return { data: null, error: { code: "TEST_DB_FAILURE", message: "private database detail" } };
@@ -74,6 +76,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
       const from = this.from ?? 0;
       const size = Math.min(cap, this.size ?? Infinity, this.to === undefined ? Infinity : this.to - from + 1);
       data = structuredClone(data.slice(from, from + size));
+      record.returned = data.length;
       return { data: this.singleRow ? data[0] ?? null : data, error: null };
     }
   }
