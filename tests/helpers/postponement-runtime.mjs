@@ -10,6 +10,7 @@ const nodeRequire = createRequire(import.meta.url);
 const TABLE = {
   studies: "hamster_studies", members: "hamster_study_members", versions: "hamster_study_rule_versions",
   submissions: "hamster_submissions", postponements: "hamster_postponements", penalties: "hamster_penalties",
+  counts: "hamster_daily_solution_counts", goals: "hamster_goal_completions",
   repositories: "hamster_repository_connections",
 };
 
@@ -23,6 +24,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
   };
   state.rows[TABLE.studies].push({ id: "study", name: "테스트 스터디", invite_code: "test", created_at: `${joined}T04:00:00+09:00`,
     max_presolve_days: 2, max_consecutive_postpone: limit, postpone_deadline_hour: 23, postpone_deadline_minute: 59, rule_config: {} });
+  state.rows[TABLE.versions].push({ ...state.rows[TABLE.studies][0], study_id: "study", effective_from: joined });
   state.rows[TABLE.members].push({ study_id: "study", user_id: "alice", joined_at: `${joined}T04:00:00+09:00`, display_name: "테스트 사용자", role: "member" });
   class TestDate extends Date {
     constructor(...args) { super(...(args.length ? args : [clock])); }
@@ -65,7 +67,21 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
         return { data: null, error: null };
       }
       state.onRead?.(this.table);
-      let data = (state.rows[this.table] ?? []).filter((row) => this.filters.every((filter) => filter(row)));
+      let source = state.rows[this.table] ?? [];
+      if (this.table === TABLE.counts) {
+        const grouped = new Map();
+        for (const row of state.rows[TABLE.submissions]) {
+          const date = new Date(Date.parse(row.solved_at) + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          const item = {study_id:row.study_id,user_id:row.user_id,study_date:date,
+            platform:row.hamster_problems.platform,difficulty:row.hamster_problems.difficulty};
+          const key = JSON.stringify(item);
+          const existing = grouped.get(key);
+          if (existing) { existing.solves += 1; if (row.solved_at > existing.solved_through) existing.solved_through = row.solved_at; }
+          else grouped.set(key, {...item,solves:1,solved_through:row.solved_at});
+        }
+        source = [...grouped.values()];
+      }
+      let data = source.filter((row) => this.filters.every((filter) => filter(row)));
       data.sort((a, b) => {
         for (const [key, ascending] of this.orders) {
           const compared = String(a[key]).localeCompare(String(b[key]));
@@ -83,6 +99,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
   const admin = { from: (table) => new Query(table) };
   const auth = {
     createAdminClient: () => admin,
+    requireLegacyUser: (request) => auth.requireUser(request),
     requireUser: async (request) => {
       const token = request.headers.get("authorization");
       if (!token?.startsWith("Bearer ")) throw new Error("UNAUTHORIZED");

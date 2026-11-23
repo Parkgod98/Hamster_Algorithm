@@ -7,13 +7,14 @@ import ts from 'typescript';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const nodeRequire=createRequire(import.meta.url);
-export const TABLE={studies:'hamster_studies',members:'hamster_study_members',submissions:'hamster_submissions',postponements:'hamster_postponements',versions:'hamster_study_rule_versions',penalties:'hamster_penalties'};
+export const TABLE={studies:'hamster_studies',members:'hamster_study_members',submissions:'hamster_submissions',postponements:'hamster_postponements',versions:'hamster_study_rule_versions',penalties:'hamster_penalties',goals:'hamster_goal_completions'};
 
 // Executes the actual route and actual domain modules. No network or real Supabase client is available.
 export function runtime({cap=1000,joined='2026-10-17',now='2026-10-18T04:05:00+09:00',secret='test-cron',routeSource}={}) {
   let clock=Date.parse(now),sequence=0;
   const state={rows:Object.fromEntries(Object.values(TABLE).map(k=>[k,[]])),queries:[],writes:[],failures:[],onRead:null};
   state.rows[TABLE.studies].push({id:'study',created_at:`${joined}T04:00:00+09:00`,rule_config:{},max_presolve_days:2,max_consecutive_postpone:2,postpone_deadline_hour:23,postpone_deadline_minute:59});
+  state.rows[TABLE.versions].push({...state.rows[TABLE.studies][0],study_id:"study",effective_from:joined});
   state.rows[TABLE.members].push({study_id:'study',user_id:'alice',joined_at:`${joined}T04:00:00+09:00`});
   class TestDate extends Date {constructor(...args){super(...(args.length?args:[clock]));}static now(){return clock;}}
   const compare=(key,a,b)=>key.endsWith('_at')?Date.parse(a)-Date.parse(b):String(a).localeCompare(String(b));

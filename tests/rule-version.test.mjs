@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { normalizeRuleVersions, rulesForDate } from "../src/lib/rule-version.ts";
 import { DEFAULT_RULE_CONFIG, normalizeRuleConfig } from "../src/lib/rules.ts";
 
-const fallback = {
+const initial = {
   effectiveFrom: "2026-09-01",
   ruleConfig: DEFAULT_RULE_CONFIG,
   postponeDeadlineHour: 23,
@@ -23,8 +23,8 @@ test("규칙 변경일 이전 날짜는 이전 규칙을 유지한다", () => {
       max_presolve_days: 1,
     },
   ], normalizeRuleConfig);
-  assert.equal(rulesForDate(versions, "2026-09-09", fallback).ruleConfig.bojSilverCount, 2);
-  assert.equal(rulesForDate(versions, "2026-09-10", fallback).ruleConfig.bojSilverCount, 3);
+  assert.equal(rulesForDate([initial, ...versions], "2026-09-09").ruleConfig.bojSilverCount, 2);
+  assert.equal(rulesForDate([initial, ...versions], "2026-09-10").ruleConfig.bojSilverCount, 3);
 });
 
 test("여러 규칙 이력 중 날짜에 맞는 가장 최근 버전을 선택한다", () => {
@@ -46,7 +46,7 @@ test("여러 규칙 이력 중 날짜에 맞는 가장 최근 버전을 선택�
       max_presolve_days: 1,
     },
   ], normalizeRuleConfig);
-  assert.equal(rulesForDate(versions, "2026-09-15", fallback).ruleConfig.bojGoldCount, 3);
-  assert.equal(rulesForDate(versions, "2026-09-21", fallback).ruleConfig.bojGoldCount, 2);
-  assert.equal(rulesForDate(versions, "2026-09-21", fallback).maxPresolveDays, 0);
+  assert.equal(rulesForDate([initial, ...versions], "2026-09-15").ruleConfig.bojGoldCount, 3);
+  assert.equal(rulesForDate([initial, ...versions], "2026-09-21").ruleConfig.bojGoldCount, 2);
+  assert.equal(rulesForDate([initial, ...versions], "2026-09-21").maxPresolveDays, 0);
 });

@@ -1,4 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
+import { DB } from "./db";
+import { tokenHash } from "./account-crypto";
 
 export function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -14,10 +16,25 @@ export function createUserVerifier() {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-export async function requireUser(request: Request) {
+export async function requireLegacyUser(request: Request) {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!token) throw new Error("UNAUTHORIZED");
   const { data, error } = await createUserVerifier().auth.getUser(token);
-  if (error || !data.user) throw new Error("UNAUTHORIZED");
+  if (error) {
+    if (error.status === 401 || error.status === 403 || error.code === "bad_jwt" || error.code === "session_not_found"
+      || error.code === "user_not_found") throw new Error("UNAUTHORIZED");
+    throw error;
+  }
+  if (!data.user?.identities?.some((identity) => identity.provider === "github")) throw new Error("UNAUTHORIZED");
   return data.user;
+}
+
+export async function requireUser(request: Request) {
+  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  if (!/^hs1_[0-9a-f]{64}$/.test(token)) throw new Error("UNAUTHORIZED");
+  const { data, error } = await createAdminClient().from(DB.accountSessions).select("user_id")
+    .eq("token_hash", tokenHash(token)).maybeSingle();
+  if (error) throw new Error("Account session lookup failed");
+  if (!data) throw new Error("UNAUTHORIZED");
+  return { id: String(data.user_id) };
 }

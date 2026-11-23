@@ -1,0 +1,58 @@
+.account-panel { width: 100%; max-width: 32rem; color: var(--ink); }
+.account-title { margin: 0 0 22px; font-size: clamp(32px, 4.4vw, 48px); letter-spacing: -.065em; line-height: 1.12; }
+.account-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+  margin-bottom: 24px;
+  background: var(--segment-track);
+  border-radius: 15px;
+}
+.account-modes button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.account-modes button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--segment-shadow); }
+.account-panel form, form.account-panel, .account-panel label { display: grid; gap: 7px; }
+.account-panel form, form.account-panel { gap: 16px; }
+.account-panel label { min-width: 0; color: var(--muted); font-size: 14px; font-weight: 650; text-align: start; }
+.account-panel input, .account-panel select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  padding: 10px 13px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-weight: 450;
+  font-size: 16px;
+}
+.account-panel input::placeholder { color: var(--muted); }
+.account-panel input:read-only { background: var(--paper); }
+.account-panel .button { min-height: 48px; margin-top: 4px; background: var(--ink); color: white; border-radius: var(--control-radius); font-size: 16px; }
+.account-panel button:disabled { opacity: .6; }
+.account-links { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0 14px; margin-top: 6px; }
+.account-links button { font-size: 14px; color: var(--muted); cursor: pointer; border: 0; padding: 6px 0; min-height: 44px; background: transparent; }
+.account-links button:hover { text-decoration: underline; }
+.account-panel p { font-size: 14px; line-height: 1.6; }
+.account-panel p:empty { display: none; }
+.account-page {
+  width: min(100%, 520px);
+  margin: 0 auto;
+  padding: max(env(safe-area-inset-top), 24px) 20px 44px;
+}
+.account-page .app-brand { margin-bottom: 28px; }
+.account-page > section { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: clamp(18px, 4vw, 30px); }
+.account-page h1 { font-size: clamp(22px, 5vw, 30px); line-height: 1.4; letter-spacing: -.045em; margin: 0 0 12px; }
+.account-page p { margin-block: 0 16px; }
+.account-page p:only-child { margin: 0; }
+.account-page a { color: var(--accent); font-weight: 650; }

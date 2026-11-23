@@ -71,7 +71,6 @@ export function PushNotificationControl() {
         const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
         const standalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
         if (ios && !standalone) setNeedsInstall(true);
-        await load();
       })();
     }, 0);
     return () => window.clearTimeout(timer);
@@ -197,9 +196,9 @@ export function PushNotificationControl() {
   if (unsupported) return null;
   const deviceOn = settings?.deviceSubscribed ?? false;
   return <div className={`push-control${open ? " is-open" : ""}`}>
-    <button className="push-control-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="알림 설정">
+    <button className="push-control-trigger" onClick={() => { if (!open) void load().catch(() => setMessage("알림 설정을 불러오지 못했어요.")); setOpen(!open); }} aria-expanded={open} aria-label="알림 설정">
       🔔
-      <span>{deviceOn ? "이 기기 알림 켜짐" : "알림 켜기"}</span>
+      <span>{settings ? deviceOn ? "이 기기 알림 켜짐" : "알림 켜기" : "알림 설정"}</span>
     </button>
     {open && <section className="push-control-panel">
       <div className="push-control-heading"><div><strong>햄쮸터 알림</strong><p>인증 완료와 밤 9시 이후 미인증 알림을 받을 수 있어요.</p></div><button onClick={() => setOpen(false)} aria-label="닫기">×</button></div>

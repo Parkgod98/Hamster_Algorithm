@@ -36,11 +36,14 @@ export function normalizeRuleVersions(
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
 }
 
-export function rulesForDate(versions: EffectiveRules[], date: string, fallback: EffectiveRules): EffectiveRules {
-  let selected = fallback;
-  for (const version of versions) {
-    if (version.effectiveFrom > date) break;
-    selected = version;
+export function rulesForDate(versions: EffectiveRules[], date: string): EffectiveRules {
+  // Versions are normalized in ascending order before calendar evaluation.
+  let from = 0, to = versions.length;
+  while (from < to) {
+    const middle = from + Math.floor((to - from) / 2);
+    if (versions[middle].effectiveFrom <= date) from = middle + 1;
+    else to = middle;
   }
-  return selected;
+  if (from === 0) throw new Error("Missing effective study rules for " + date);
+  return versions[from - 1];
 }

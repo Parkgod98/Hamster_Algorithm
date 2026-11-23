@@ -114,8 +114,8 @@ test("기본 23:59 마감은 자정 이후 다시 열리지 않는다", async ()
 
 test("새벽 마감 설정은 같은 Study Day의 다음 날 마감으로 계산한다", async () => {
   const env = runtime();
-  env.rows[env.table.studies][0].postpone_deadline_hour = 3;
-  env.rows[env.table.studies][0].postpone_deadline_minute = 59;
+  env.rows[env.table.versions][0].postpone_deadline_hour = 3;
+  env.rows[env.table.versions][0].postpone_deadline_minute = 59;
   env.setNow("2026-09-16T03:59:59.999+09:00");
   assert.equal((await submit(env, { studyDate: "2026-09-15" })).httpStatus, 200);
   env.setNow("2026-09-16T04:00:00+09:00");
@@ -129,14 +129,14 @@ test("조회 중 마감이나 04:00을 지나면 저장하지 않는다", async 
   for (const crossing of ["2026-09-16T00:00:00+09:00", "2026-09-16T04:00:00+09:00"]) {
     const env = runtime();
     env.setNow("2026-09-15T23:59:59+09:00");
-    env.setReadHook((table) => { if (table === env.table.submissions) env.setNow(crossing); });
+    env.setReadHook((table) => { if (table === env.table.counts) env.setNow(crossing); });
     const result = await submit(env);
     assert.equal(result.httpStatus, 409);
     assert.equal(env.writes.length, 0);
   }
 });
 
-for (const key of ["studies", "members", "versions", "submissions", "postponements"]) {
+for (const key of ["studies", "members", "versions", "counts", "postponements", "goals"]) {
   test(`${key} 조회 실패를 빈 이력으로 간주하지 않고 미루기를 차단한다`, async () => {
     const env = runtime(); env.fail(key);
     const result = await submit(env);
@@ -156,18 +156,18 @@ test("1,000행 이후의 상환도 포함하며 프로젝트 행 제한이 더 �
   const env = runtime({ cap: 100 });
   env.postpone("2026-09-15"); env.postpone("2026-09-16");
   env.setNow("2026-09-17T22:00:00+09:00");
-  for (let i = 0; i < 1000; i += 1) env.solve("2026-09-17", "Bronze V");
+  for (let i = 0; i < 1000; i += 1) env.solve("2026-09-17", `미분류 ${i}`);
   env.solve("2026-09-17");
   const result = await submit(env);
   assert.equal(result.httpStatus, 200);
   assert.equal(result.body.backlogCount, 2);
-  assert.ok(env.queries.some((query) => query.table === env.table.submissions && query.from >= 1000));
+  assert.ok(env.queries.some((query) => query.table === env.table.counts && query.from >= 1000));
 });
 
 test("중간 페이지 실패 후 부분 이력으로 신청을 허용하지 않는다", async () => {
   const env = runtime();
-  for (let i = 0; i < 501; i += 1) env.solve("2026-09-15", "Bronze V");
-  env.fail("submissions", "select", 500);
+  for (let i = 0; i < 501; i += 1) env.solve("2026-09-15", `미분류 ${i}`);
+  env.fail("counts", "select", 500);
   assert.equal((await submit(env)).httpStatus, 503);
   assert.equal(env.writes.length, 0);
 });
@@ -184,8 +184,11 @@ test("과거 월의 아이콘에도 다음 달 상환을 반영하고 확정 벌
   assert.equal(day.state, "complete");
   assert.equal(day.resolvedOn, "2026-10-02");
   assert.ok(day.postponedAt);
-  assert.equal(day.penalty, 25000);
-  assert.equal(day.submissions.length, 0, "실제 풀이 날짜는 이동하지 않는다");
+  const detail = await env.request("GET", undefined, { route: "src/app/api/dashboard/panel/route.ts",
+    url: "/api/dashboard/panel?studyId=study&view=day&date=2026-09-30" });
+  assert.equal(detail.httpStatus, 200);
+  assert.equal(detail.body.penalties[0].amount, 25000);
+  assert.equal(detail.body.submissions.length, 0, "실제 풀이 날짜는 이동하지 않는다");
   assert.equal(september.body.todayPostponement.canPostpone, true);
   assert.equal((await submit(env)).httpStatus, 200);
   const october = await dashboard(env, "2026-10");

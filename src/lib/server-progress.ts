@@ -1,56 +1,66 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DB } from "./db";
-import { dateRange, evaluateTimelineByDay, type TimelineResult } from "./progress";
-import { normalizeRuleConfig, submissionCredit } from "./rules";
+import { dateRange, evaluateTimelineByDay, type TimedCredit, type TimelineDay, type TimelineResult } from "./progress";
+import { normalizeRuleConfig, submissionCredit, type ManualGoal } from "./rules";
 import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "./rule-version";
 import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "./study-day";
 import { readAllRows } from "./read-all-rows";
 import type { NotificationProgressState } from "./notification-rules";
 import type { Platform } from "./types";
 
-type ProblemRelation = { platform: Platform; difficulty: string };
-type StudyRow = {
-  id: string;
-  created_at: string;
-  max_presolve_days: number;
-  max_consecutive_postpone: number;
-  postpone_deadline_hour: number;
-  postpone_deadline_minute: number;
-  rule_config: unknown;
-};
 type MemberRow = { user_id: string; joined_at: string };
-type SubmissionRow = { user_id: string; solved_at: string; hamster_problems: unknown };
+export type DailySolutions = { user_id: string; study_date: string; platform: Platform; difficulty: string; solves: number; solved_through: string };
 type PostponementRow = { user_id: string; study_date: string };
+export type GoalCompletionRow = { user_id: string; study_date: string; goal: ManualGoal; created_at: string };
 
 export type ProgressSubmission = { solvedAt: string; platform: Platform; difficulty: string };
 
 export type StudyProgressContext = {
   studyId: string;
   targetDate: string;
-  study: StudyRow;
-  fallback: EffectiveRules;
   versions: ReturnType<typeof normalizeRuleVersions>;
   members: Map<string, { joinedAt: string; joinedDate: string }>;
-  submissionsByUser: Map<string, ProgressSubmission[]>;
+  solutionsByUser: Map<string, DailySolutions[]>;
   postponementsByUser: Map<string, Set<string>>;
+  completionsByUser: Map<string, GoalCompletionRow[]>;
 };
 
-function problemFromRelation(value: unknown): ProblemRelation | null {
-  if (Array.isArray(value)) return (value[0] as ProblemRelation | undefined) ?? null;
-  if (value && typeof value === "object") return value as ProblemRelation;
-  return null;
+export function readGoalCompletions(admin: SupabaseClient, studyId: string, through: string, userIds?: string[], asOf?: string) {
+  return readAllRows<GoalCompletionRow>((from, to) => {
+    let query = admin.from(DB.goalCompletions).select("user_id,study_date,goal,created_at")
+      .eq("study_id", studyId).lte("study_date", through);
+    if (userIds?.length) query = query.in("user_id", userIds);
+    if (asOf) query = query.lt("created_at", asOf);
+    return query.order("study_date").order("user_id").order("goal").range(from, to);
+  });
+}
+
+export function evaluateStudyTimeline(days: TimelineDay[], current: string, versions: EffectiveRules[], completions: GoalCompletionRow[]) {
+  return evaluateTimelineByDay(days, current,
+    (date) => rulesForDate(versions, date).maxPresolveDays,
+    (date) => rulesForDate(versions, date).ruleConfig.goals,
+    completions.map((row) => ({ target: row.study_date, earned: studyDateFromTimestamp(row.created_at), at: row.created_at, goal: row.goal })));
+}
+
+export function groupDailyCredits(rows: DailySolutions[], versions: EffectiveRules[], joinedDate: string, endDate: string) {
+  const groups = new Map<string, { credits: number; creditEvents: TimedCredit[] }>();
+  for (const row of rows) {
+    const date = row.study_date;
+    if (date < joinedDate || date > endDate) continue;
+    const credits = row.solves * submissionCredit(row.platform, row.difficulty, rulesForDate(versions, date).ruleConfig);
+    if (!credits) continue;
+    const group = groups.get(date) ?? { credits: 0, creditEvents: [] };
+    group.credits += credits;
+    group.creditEvents.push({ at: row.solved_through, credits });
+    groups.set(date, group);
+  }
+  return groups;
 }
 
 export async function loadStudyProgressContext(
   admin: SupabaseClient, studyId: string, targetDate: string, userIds?: string[],
 ): Promise<StudyProgressContext | null> {
-  const studyResult = await admin.from(DB.studies)
-    .select("id,created_at,max_presolve_days,max_consecutive_postpone,postpone_deadline_hour,postpone_deadline_minute,rule_config")
-    .eq("id", studyId).maybeSingle();
-  if (studyResult.error) throw studyResult.error;
-  if (!studyResult.data) return null;
-
-  const [memberRows, versionRows, submissionRows, postponementRows] = await Promise.all([
+  const [memberRows, versionRows, submissionRows, postponementRows, goalRows, studyResult] = await Promise.all([
     readAllRows<MemberRow>((from, to) => {
       let query = admin.from(DB.studyMembers).select("user_id,joined_at").eq("study_id", studyId);
       if (userIds?.length) query = query.in("user_id", userIds);
@@ -60,11 +70,11 @@ export async function loadStudyProgressContext(
       .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days")
       .eq("study_id", studyId).lte("effective_from", targetDate)
       .order("effective_from", { ascending: true }).range(from, to)),
-    readAllRows<SubmissionRow>((from, to) => {
-      let query = admin.from(DB.submissions).select("user_id,solved_at,hamster_problems(platform,difficulty)")
-        .eq("study_id", studyId).lt("solved_at", studyDayEndExclusiveTimestamp(targetDate));
+    readAllRows<DailySolutions>((from, to) => {
+      let query = admin.from(DB.dailySolutionCounts).select("user_id,study_date,platform,difficulty,solves,solved_through")
+        .eq("study_id", studyId).lte("study_date", targetDate);
       if (userIds?.length) query = query.in("user_id", userIds);
-      return query.order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to);
+      return query.order("study_date").order("user_id").order("platform").order("difficulty").order("solved_through").range(from, to);
     }),
     readAllRows<PostponementRow>((from, to) => {
       let query = admin.from(DB.postponements).select("user_id,study_date")
@@ -72,30 +82,24 @@ export async function loadStudyProgressContext(
       if (userIds?.length) query = query.in("user_id", userIds);
       return query.order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to);
     }),
+    readGoalCompletions(admin, studyId, targetDate, userIds, studyDayEndExclusiveTimestamp(targetDate)),
+    admin.from(DB.studies).select("id").eq("id", studyId).maybeSingle(),
   ]);
+  if (studyResult.error) throw studyResult.error;
+  if (!studyResult.data) return null;
 
-  const study = studyResult.data as StudyRow;
-  const fallback: EffectiveRules = {
-    effectiveFrom: studyDateFromTimestamp(study.created_at),
-    ruleConfig: normalizeRuleConfig(study.rule_config),
-    postponeDeadlineHour: study.postpone_deadline_hour,
-    postponeDeadlineMinute: study.postpone_deadline_minute,
-    maxConsecutivePostpone: study.max_consecutive_postpone,
-    maxPresolveDays: study.max_presolve_days,
-  };
   const versions = normalizeRuleVersions(versionRows, normalizeRuleConfig);
   const members = new Map<string, { joinedAt: string; joinedDate: string }>();
   for (const member of memberRows) members.set(member.user_id, {
     joinedAt: member.joined_at, joinedDate: studyDateFromTimestamp(member.joined_at),
   });
 
-  const submissionsByUser = new Map<string, ProgressSubmission[]>();
-  for (const submission of submissionRows) {
-    const problem = problemFromRelation(submission.hamster_problems);
-    if (!problem) throw new Error("Progress submission is missing its problem");
-    const list = submissionsByUser.get(submission.user_id) ?? [];
-    list.push({ solvedAt: submission.solved_at, platform: problem.platform, difficulty: problem.difficulty });
-    submissionsByUser.set(submission.user_id, list);
+  const solutionsByUser = new Map<string, DailySolutions[]>();
+  for (const row of submissionRows) {
+    if (!Number.isSafeInteger(row.solves) || row.solves < 1 || !row.platform || typeof row.difficulty !== "string") throw new Error("Invalid daily solution count");
+    const list = solutionsByUser.get(row.user_id) ?? [];
+    list.push(row);
+    solutionsByUser.set(row.user_id, list);
   }
   const postponementsByUser = new Map<string, Set<string>>();
   for (const row of postponementRows) {
@@ -103,14 +107,23 @@ export async function loadStudyProgressContext(
     dates.add(row.study_date);
     postponementsByUser.set(row.user_id, dates);
   }
-  return { studyId, targetDate, study, fallback, versions, members, submissionsByUser, postponementsByUser };
+  const completionsByUser = new Map<string, GoalCompletionRow[]>();
+  for (const row of goalRows) {
+    const list = completionsByUser.get(row.user_id) ?? [];
+    list.push(row);
+    completionsByUser.set(row.user_id, list);
+  }
+  return { studyId, targetDate, versions, members, solutionsByUser, postponementsByUser, completionsByUser };
 }
 
 export function appendProgressSubmissions(context: StudyProgressContext, userId: string, submissions: ProgressSubmission[]) {
   if (!submissions.length) return;
-  const existing = context.submissionsByUser.get(userId) ?? [];
-  existing.push(...submissions);
-  context.submissionsByUser.set(userId, existing);
+  const existing = context.solutionsByUser.get(userId) ?? [];
+  for (const submission of submissions) existing.push({
+    user_id: userId, study_date: studyDateFromTimestamp(submission.solvedAt), platform: submission.platform,
+    difficulty: submission.difficulty, solves: 1, solved_through: submission.solvedAt,
+  });
+  context.solutionsByUser.set(userId, existing);
 }
 
 /** Calendar needs the current state of past obligations, not a month-end snapshot. */
@@ -120,17 +133,11 @@ export function evaluateMemberTimeline(
   if (targetDate > context.targetDate) throw new Error("Progress context does not include target date");
   const membership = context.members.get(userId);
   if (!membership || targetDate < membership.joinedDate) return [];
-  const creditMap = new Map<string, number>();
-  for (const submission of context.submissionsByUser.get(userId) ?? []) {
-    const date = studyDateFromTimestamp(submission.solvedAt);
-    if (date < membership.joinedDate || date > targetDate) continue;
-    const config = rulesForDate(context.versions, date, context.fallback).ruleConfig;
-    creditMap.set(date, (creditMap.get(date) ?? 0) + submissionCredit(submission.platform, submission.difficulty, config));
-  }
+  const creditMap = groupDailyCredits(context.solutionsByUser.get(userId) ?? [], context.versions, membership.joinedDate, targetDate);
   const postponed = context.postponementsByUser.get(userId) ?? new Set<string>();
-  return evaluateTimelineByDay(
-    dateRange(membership.joinedDate, targetDate).map((date) => ({ date, credits: creditMap.get(date) ?? 0, postponed: postponed.has(date) })),
-    targetDate, (date) => rulesForDate(context.versions, date, context.fallback).maxPresolveDays,
+  return evaluateStudyTimeline(
+    dateRange(membership.joinedDate, targetDate).map((date) => ({ date, ...(creditMap.get(date) ?? { credits: 0 }), postponed: postponed.has(date) })),
+    targetDate, context.versions, context.completionsByUser.get(userId) ?? [],
   );
 }
 
@@ -138,6 +145,12 @@ export function evaluateMemberProgress(
   context: StudyProgressContext, userId: string, targetDate = context.targetDate,
 ): TimelineResult | null {
   return evaluateMemberTimeline(context, userId, targetDate).at(-1) ?? null;
+}
+
+/** Completion notifications are emitted when all obligations through today are settled. */
+export function notificationStateForProgress(snapshot: TimelineResult | null): NotificationProgressState {
+  if (snapshot?.state === "complete" && snapshot.backlogCount > 0) return "in-progress";
+  return snapshot?.state ?? "missed";
 }
 
 export async function memberProgressSnapshot(

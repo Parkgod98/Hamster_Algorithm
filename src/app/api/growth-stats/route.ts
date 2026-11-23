@@ -34,9 +34,12 @@ export async function GET(request: Request) {
     const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
     const month = requestedMonth(request.url, currentStudyDate);
     const targetUserId = new URL(request.url).searchParams.get("userId") || user.id;
-    const { data: membership, error: membershipError } = await admin.from(DB.studyMembers)
-      .select("study_id").eq("user_id", user.id).limit(1).maybeSingle();
+    const requestedStudy = new URL(request.url).searchParams.get("studyId");
+    let memberships = admin.from(DB.studyMembers).select("study_id").eq("user_id", user.id);
+    if (requestedStudy) memberships = memberships.eq("study_id", requestedStudy);
+    const { data: membership, error: membershipError } = await memberships.order("joined_at").order("study_id").limit(1).maybeSingle();
     if (membershipError) throw membershipError;
+    if (requestedStudy && !membership) return json({ error: "forbidden" }, 403);
     if (!membership) return json({ report: buildGrowthReport([], month, currentStudyDate) });
 
     const { data: targetMembership, error: targetMembershipError } = await admin.from(DB.studyMembers)

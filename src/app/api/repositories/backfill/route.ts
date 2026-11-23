@@ -2,126 +2,59 @@ import { NextResponse } from "next/server";
 import { parseBaekjoonHubCommit } from "@/lib/baekjoonhub";
 import { DB } from "@/lib/db";
 import { installationToken } from "@/lib/github-app";
-import { createAdminClient, requireUser } from "@/lib/supabase";
+import { recordGitHubSolutions } from "@/lib/github-ingestion";
+import { studyDateFromTimestamp,studyDayStartTimestamp } from "@/lib/study-day";
+import { createAdminClient,requireUser } from "@/lib/supabase";
 
-const DETAIL_CONCURRENCY = 8;
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
+const BATCH = 20;
+type Detail = {sha:string;commit:{message:string;committer:{date:string}|null;author:{date:string}|null};files?:Array<{filename:string;status:string}>};
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser(request);
-    const { connectionId } = await request.json() as { connectionId?: string };
-    if (!connectionId) return NextResponse.json({ error: "connectionId required" }, { status: 400 });
-
-    const admin = createAdminClient();
-    const { data: connection } = await admin.from(DB.repositoryConnections)
-      .select("id,user_id,study_id,installation_id,github_repository_id,full_name")
-      .eq("id", connectionId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!connection || !connection.installation_id) return NextResponse.json({ error: "repository not found" }, { status: 404 });
-
-    const token = await installationToken(connection.installation_id);
-    const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
-    let scanned = 0;
-    let inserted = 0;
-
-    for (let page = 1; page <= 10; page += 1) {
-      const list = await fetch(`https://api.github.com/repos/${connection.full_name}/commits?per_page=100&page=${page}`, { headers });
-      if (!list.ok) return NextResponse.json({ error: "github backfill list failed" }, { status: 502 });
-      const commits = await list.json() as Array<{ sha: string }>;
-      if (!commits.length) break;
-
-      const details = await mapWithConcurrency(commits, DETAIL_CONCURRENCY, async (summary) => {
-        const detailRes = await fetch(`https://api.github.com/repos/${connection.full_name}/commits/${summary.sha}`, { headers });
-        if (!detailRes.ok) return null;
-        return await detailRes.json() as {
-          sha: string;
-          commit: { message: string; committer: { date: string } | null; author: { date: string } | null };
-          files?: Array<{ filename: string }>;
-        };
-      });
-
-      const parsedByEvent = new Map<string, ReturnType<typeof parseBaekjoonHubCommit>[number]>();
-      for (const detail of details) {
-        if (!detail) continue;
-        const timestamp = detail.commit.committer?.date || detail.commit.author?.date;
-        if (!timestamp) continue;
-        scanned += 1;
-        const parsed = parseBaekjoonHubCommit(connection.github_repository_id, {
-          id: detail.sha,
-          message: detail.commit.message,
-          timestamp,
-          modified: (detail.files ?? []).map((file) => file.filename),
-        });
-        for (const submission of parsed) parsedByEvent.set(submission.sourceEventId, submission);
-      }
-
-      const parsed = [...parsedByEvent.values()];
-      if (parsed.length) {
-        const uniqueProblems = new Map<string, { platform: string; external_id: string; title: string; difficulty: string }>();
-        for (const submission of parsed) {
-          uniqueProblems.set(`${submission.platform}:${submission.externalId}`, {
-            platform: submission.platform,
-            external_id: submission.externalId,
-            title: submission.title,
-            difficulty: submission.difficulty,
-          });
+    const user=await requireUser(request);
+    const {connectionId,head,page=1}=await request.json() as {connectionId?:string;head?:string;page?:number};
+    if(!connectionId || !Number.isSafeInteger(page) || page<1 || (page>1 && !head) || (head && !/^[a-f0-9]{40,64}$/.test(head)))
+      return NextResponse.json({error:"가져올 범위를 확인해주세요."},{status:400});
+    const db=createAdminClient();
+    const [connection,membership]=await Promise.all([
+      db.from(DB.repositoryConnections).select("id,installation_id,github_repository_id,full_name").eq("id",connectionId).eq("user_id",user.id).eq("active",true).maybeSingle(),
+      db.from(DB.studyMembers).select("joined_at").eq("user_id",user.id).order("joined_at").limit(1).maybeSingle(),
+    ]);
+    if(connection.error || membership.error)throw new Error("Repository lookup failed");
+    if(!connection.data?.installation_id || !membership.data)return NextResponse.json({error:"연결된 저장소를 찾을 수 없어요."},{status:404});
+    const {id,installation_id,github_repository_id,full_name}=connection.data;
+    const token=await installationToken(installation_id);
+    const endpoint=`https://api.github.com/repos/${full_name}/commits`;
+    const headers={Authorization:`Bearer ${token}`,Accept:"application/vnd.github+json"};
+    const params=new URLSearchParams({per_page:String(BATCH),page:String(page),since:studyDayStartTimestamp(studyDateFromTimestamp(membership.data.joined_at))});
+    if(head)params.set("sha",head);
+    const list=await fetch(`${endpoint}?${params}`,{headers,cache:"no-store"});
+    if(!list.ok)throw new Error("GitHub read failed");
+    const commits=await list.json() as Array<{sha:string}>;
+    const items=new Map<string,ReturnType<typeof parseBaekjoonHubCommit>[number]>();
+    for(let start=0;start<commits.length;start+=5){
+      const parsed=await Promise.all(commits.slice(start,start+5).map(async ({sha})=>{
+        let detail:Detail | undefined;
+        const files:string[]=[];
+        for(let filePage=1;;filePage++){
+          const res=await fetch(`${endpoint}/${sha}?per_page=100&page=${filePage}`,{headers,cache:"no-store"});
+          if(!res.ok)throw new Error("GitHub commit read failed");
+          const part=await res.json() as Detail;
+          detail??=part;
+          files.push(...(part.files??[]).filter(f=>f.status!=="removed").map(f=>f.filename));
+          if(!res.headers.get("link")?.includes('rel="next"'))break;
         }
-
-        const { data: problems, error: problemError } = await admin.from(DB.problems)
-          .upsert([...uniqueProblems.values()], { onConflict: "platform,external_id" })
-          .select("id,platform,external_id");
-        if (problemError) return NextResponse.json({ error: "problem backfill save failed" }, { status: 500 });
-
-        const problemIdByKey = new Map(
-          (problems ?? []).map((problem) => [`${problem.platform}:${problem.external_id}`, problem.id]),
-        );
-        const submissionRows = parsed.flatMap((submission) => {
-          const problemId = problemIdByKey.get(`${submission.platform}:${submission.externalId}`);
-          if (!problemId) return [];
-          return [{
-            user_id: connection.user_id,
-            study_id: connection.study_id,
-            repository_connection_id: connection.id,
-            problem_id: problemId,
-            solved_at: submission.solvedAt,
-            source: "backfill" as const,
-            source_event_id: submission.sourceEventId,
-          }];
-        });
-
-        if (submissionRows.length) {
-          const { data: saved, error: saveError } = await admin.from(DB.submissions)
-            .upsert(submissionRows, { onConflict: "source_event_id", ignoreDuplicates: true })
-            .select("id");
-          if (saveError) return NextResponse.json({ error: "submission backfill save failed" }, { status: 500 });
-          inserted += saved?.length ?? 0;
-        }
-      }
-
-      if (commits.length < 100) break;
+        const timestamp=detail.commit.committer?.date || detail.commit.author?.date;
+        if(!timestamp)throw new Error("Missing commit date");
+        return parseBaekjoonHubCommit(github_repository_id,{id:sha,message:detail.commit.message,timestamp,modified:files});
+      }));
+      for(const item of parsed.flat())items.set(item.sourceEventId,item);
     }
-    return NextResponse.json({ ok: true, scanned, inserted });
-  } catch (error) {
-    if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    return NextResponse.json({ error: error instanceof Error ? error.message : "unexpected error" }, { status: 500 });
+    const saved=items.size ? await recordGitHubSolutions(db,id,"backfill",[...items.values()]) : [];
+    return NextResponse.json({ok:true,inserted:new Set(saved.map(row=>row.event_id)).size,
+      head:head || commits[0]?.sha || null,nextPage:list.headers.get("link")?.includes('rel="next"')?page+1:null});
+  }catch(error){
+    if(error instanceof Error && error.message==="UNAUTHORIZED")return NextResponse.json({error:"로그인해주세요."},{status:401});
+    return NextResponse.json({error:"풀이를 가져오지 못했어요. 다시 누르면 마지막 저장 지점부터 이어갑니다."},{status:503});
   }
 }
