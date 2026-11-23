@@ -99,6 +99,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
   const admin = { from: (table) => new Query(table) };
   const auth = {
     createAdminClient: () => admin,
+    requireLegacyUser: (request) => auth.requireUser(request),
     requireUser: async (request) => {
       const token = request.headers.get("authorization");
       if (!token?.startsWith("Bearer ")) throw new Error("UNAUTHORIZED");

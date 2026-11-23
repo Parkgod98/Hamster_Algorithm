@@ -34,10 +34,21 @@ function localSession(): AppSession | null {
 
 export function saveAccountSession(token: string, userId: string) {
   localStorage.setItem(accountKey, JSON.stringify({ token, userId }));
-  window.dispatchEvent(new Event(accountKey));
+  // The sign-in form navigates this tab immediately. Other tabs receive the storage event.
 }
 export function currentAccountId() {
   return localSession()?.user.id;
+}
+
+export async function forgetLegacySession(expectedToken: string) {
+  const client = oauthClient();
+  const { data, error } = await client.auth.getSession();
+  if (error && localStorage.getItem("hamster-auth")) throw error;
+  if (!data.session) return true;
+  if (data.session.access_token !== expectedToken) return false;
+  const result = await client.auth.signOut({ scope: "local" });
+  if (result.error && localStorage.getItem("hamster-auth")) throw result.error;
+  return true;
 }
 
 export function forgetAccountSession(expectedToken: string) {
@@ -62,7 +73,9 @@ export function browserSupabase() {
     async getSession(): Promise<{ data: { session: AppSession | null } }> {
       const session = localSession();
       if (session) return { data: { session } };
+      if (!localStorage.getItem("hamster-auth")) return { data: { session: null } };
       const result = await oauthClient().auth.getSession();
+      if (result.error && localStorage.getItem("hamster-auth")) throw result.error;
       return { data: { session: result.data.session } };
     },
     signInWithOAuth: (...args: Parameters<ReturnType<typeof createClient>["auth"]["signInWithOAuth"]>) =>

@@ -1,4 +1,5 @@
 import { AppBrand } from "@/components/app-brand";
+import { AccountGate } from "@/components/account-gate";
 import { AuthPanel } from "@/components/auth-panel";
 import styles from "./home.module.css";
 
@@ -33,12 +34,12 @@ function CalendarPreview() {
 
 export default function Home() {
   return (
-    <main className={styles.home}>
+    <AccountGate landing><main className={styles.home}>
       <header className={styles.header}><AppBrand /></header>
       <div className={styles.content}>
         <section className={styles.access} aria-label="햄쮸터 계정"><AuthPanel /></section>
         <CalendarPreview />
       </div>
-    </main>
+    </main></AccountGate>
   );
 }

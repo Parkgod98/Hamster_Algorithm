@@ -11,10 +11,27 @@ const json = (body: unknown, status = 200) => NextResponse.json(body, { status, 
 const fail = (error: string, status: number) => json({ error }, status);
 const isAppSession = (request: Request) => request.headers.get("authorization")?.startsWith("Bearer hs1_");
 
-async function publicProfile(admin: Admin, userId: string) {
+async function readProfile(admin: Admin, userId: string) {
   const { data, error } = await admin.from(DB.profiles).select("display_name").eq("id", userId).maybeSingle();
   if (error) throw error;
-  return String(data?.display_name || "");
+  return data;
+}
+
+async function legacyAccount(admin: Admin, user: Awaited<ReturnType<typeof requireLegacyUser>>) {
+  const [credentials, profile] = await Promise.all([
+    admin.from(DB.accountCredentials).select("user_id").eq("user_id", user.id).maybeSingle(),
+    readProfile(admin, user.id),
+  ]);
+  if (credentials.error) throw credentials.error;
+  if (credentials.data) return { status: "registered" as const };
+  const githubName = user.user_metadata?.user_name || "";
+  if (profile) return { status: "legacy" as const, nickname: profile.display_name || githubName };
+
+  // The original join flow saved the membership even when its profile upsert failed.
+  const { data: member, error } = await admin.from(DB.studyMembers).select("display_name")
+    .eq("user_id", user.id).order("joined_at").order("study_id").limit(1).maybeSingle();
+  if (error) throw error;
+  return member ? { status: "legacy" as const, nickname: member.display_name || githubName } : { status: "none" as const };
 }
 
 export async function GET(request: Request) {
@@ -22,12 +39,10 @@ export async function GET(request: Request) {
     const admin = createAdminClient();
     if (isAppSession(request)) {
       const user = await requireUser(request);
-      return json({ status: "active", nickname: await publicProfile(admin, user.id) });
+      return json({ status: "active", nickname: (await readProfile(admin, user.id))?.display_name || "" });
     }
     const user = await requireLegacyUser(request);
-    const { data, error } = await admin.from(DB.accountCredentials).select("user_id").eq("user_id", user.id).maybeSingle();
-    if (error) throw error;
-    return json({ status: data ? "registered" : "legacy", nickname: await publicProfile(admin, user.id) || user.user_metadata.user_name || "" });
+    return json(await legacyAccount(admin, user));
   } catch (error) {
     return accountError(error);
   }
@@ -41,17 +56,20 @@ async function register(request: Request, admin: Admin, body: Input, legacy: boo
   const nickname = field(body,"nickname").trim();
   if (!validLogin(login) || !validPassword(password) || !validNickname(nickname) || !questionLabel(question) ||
       !answer || answer.length > 256) return fail("아이디, 닉네임, 비밀번호와 복구 질문·답변을 확인해주세요.",400);
+  const legacyUser = legacy ? await requireLegacyUser(request) : null;
+  if (legacyUser) {
+    const account = await legacyAccount(admin, legacyUser);
+    if (account.status === "none") return fail("이 GitHub 계정으로 사용한 햄쮸터 기록이 없어요. 새 계정을 만들어주세요.",403);
+    if (account.status === "registered") return fail("이미 전환한 계정이에요. 햄쮸터 아이디로 로그인해주세요.",409);
+  }
   const { data: taken, error: lookupError } = await admin.from(DB.accountCredentials).select("user_id").eq("login_id",login).maybeSingle();
   if (lookupError) throw lookupError;
   if (taken) return fail("이미 사용 중인 로그인 아이디예요.",409);
   const [passwordDigest,answerDigest] = await Promise.all([hashSecret(password),hashSecret(answer)]);
-  let userId: string;
-  if (legacy) {
-    userId = (await requireLegacyUser(request)).id;
-  } else {
+  const userId = legacyUser?.id ?? accountIdentityId(login);
+  if (!legacyUser) {
     // The existing foreign keys reference auth.users. This opaque identity has
     // no end-user credentials and never sends mail or issues a Supabase session.
-    userId = accountIdentityId(login);
     const email = `${userId}@accounts.hamster.invalid`;
     const { data, error } = await admin.auth.admin.createUser({
       id: userId, email, email_confirm: true,

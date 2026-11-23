@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AppBrand } from "@/components/app-brand";
 import { browserSupabase,githubProofClient } from "@/lib/supabase-browser";
-import { accountDestination } from "@/lib/study-navigation";
 import { clearInstallation,pendingInstallation } from "@/lib/github-connect-browser";
 export default function AuthCallback() {
   const [message,setMessage]=useState("GitHub 계정을 확인하고 있어요…");
@@ -35,7 +34,8 @@ export default function AuthCallback() {
       }
       const {error}=await browserSupabase().auth.exchangeCodeForSession(code);
       if(error)throw new Error("GitHub 로그인을 완료하지 못했어요.");
-      location.replace(accountDestination());
+      // The entry gate checks membership before the saved invite or study destination is consumed.
+      location.replace("/");
     })().catch(error=>setMessage(error instanceof Error?error.message:"다시 로그인해주세요."));
   },[]);
   return <main className="account-page"><AppBrand /><section><h1 role="status">{message}</h1><Link href="/">햄쮸터로 돌아가기</Link></section></main>;

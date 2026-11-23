@@ -34,6 +34,10 @@ Hamster 배포 주소가 정해지면 Authentication > URL Configuration의 Redi
 https://<hamster-vercel-domain>/auth/callback
 ```
 
+PR 프리뷰에서 기존 GitHub 회원 전환을 확인할 때는 Vercel이 PR에 표시하는 **브랜치 별칭**의 `/auth/callback`도 별도로 등록합니다. 그 별칭으로 햄쮸터를 열고 같은 도메인으로 돌아와야 브라우저가 인증을 마칠 수 있습니다. 허용 목록에서 빠진 주소는 공유 프로젝트의 기본 Site URL인 MyScheduler로 돌아갈 수 있습니다.
+
+기존 GitHub 회원의 로그인 세션이 유효하면 앱 첫 화면에서 새 로그인 방법을 등록합니다. 예전 세션이 없는 기기로 옮긴 회원에게는 해당 햄쮸터 주소의 `/account/restore`를 개별 안내할 수 있습니다. 이 주소는 GitHub 본인 확인을 거쳐 같은 전환 흐름으로 돌아옵니다.
+
 로컬 개발을 할 경우 아래도 추가합니다.
 
 ```text

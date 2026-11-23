@@ -20,7 +20,12 @@ export async function requireLegacyUser(request: Request) {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!token) throw new Error("UNAUTHORIZED");
   const { data, error } = await createUserVerifier().auth.getUser(token);
-  if (error || !data.user || !data.user.identities?.some((identity) => identity.provider === "github")) throw new Error("UNAUTHORIZED");
+  if (error) {
+    if (error.status === 401 || error.status === 403 || error.code === "bad_jwt" || error.code === "session_not_found"
+      || error.code === "user_not_found") throw new Error("UNAUTHORIZED");
+    throw error;
+  }
+  if (!data.user?.identities?.some((identity) => identity.provider === "github")) throw new Error("UNAUTHORIZED");
   return data.user;
 }
 
