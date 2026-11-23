@@ -1,4 +1,4 @@
-import { resumeCheckMs, clearViewer, invalidateViews, setViewsConnected, waitForViewCheck } from "./view-cache";
+import { resumeCheckMs, clearViewer, invalidateViews, notifyViews, setViewsConnected, waitForViewCheck } from "./view-cache";
 import { changedViews } from "./view-changes";
 import type { SyncSnapshot } from "./sync-stream";
 import { refreshMemberCalendars } from "./member-calendar-refresh";
@@ -42,6 +42,7 @@ export function syncAccount(session: AppSession) {
   let rollover: ReturnType<typeof setTimeout>;
   let hiddenAt: number | undefined;
   let stopped = false, failures = 0, bootstrapFallback = false;
+  let thaw: (() => void) | undefined;
   let studyDay = studyDateFromTimestamp(new Date().toISOString());
   const visible = () => document.visibilityState === "visible";
 
@@ -141,9 +142,15 @@ export function syncAccount(session: AppSession) {
   }
   function online() { stopConnection(); void connect(true); }
   function pagehide() {
-    stopConnection(); clearViewer(viewer); previous = undefined; bootstrapFallback = false;
+    stopConnection(); clearViewer(viewer, false); previous = undefined; bootstrapFallback = false;
+    // An aborted read in the outgoing document must not issue a replacement GET.
+    thaw = waitForViewCheck(viewer);
   }
-  function pageshow(event: PageTransitionEvent) { if (event.persisted) { checkDay(); void connect(true); } }
+  function pageshow(event: PageTransitionEvent) {
+    if (!event.persisted) return;
+    thaw?.(); thaw = undefined;
+    checkDay(); void connect(true); notifyViews(viewer, ['']);
+  }
   checkDay(); void connect(true);
   document.addEventListener("visibilitychange", visibility);
   window.addEventListener("online", online);

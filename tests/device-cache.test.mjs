@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clearViewer, invalidateViews, listViewKeys, peekView, putView, readView, waitForViewCheck } from "../src/lib/view-cache.ts";
+import { clearViewer, invalidateViews, listViewKeys, peekView, putView, readView, waitForViewCheck, watchView } from "../src/lib/view-cache.ts";
 import { changedViews } from "../src/lib/view-changes.ts";
 
 test("같은 조회는 합쳐 재사용하고 계정 로그아웃·무효화 후 늦은 응답을 버린다", async () => {
@@ -27,6 +27,13 @@ test("같은 조회는 합쳐 재사용하고 계정 로그아웃·무효화 후
   clearViewer(viewer);
   await assert.rejects(signedOut,{name:'AbortError'});
   assert.equal(loads,2);
+  let reloads = 0;
+  const unwatch = watchView(viewer,key,() => { reloads++; });
+  putView(viewer,key,'cached');
+  clearViewer(viewer,false);
+  assert.equal(peekView(viewer,key),undefined);
+  assert.equal(reloads,0);
+  unwatch();
 });
 
 test("디스크 없이 사진 4장·달력 12개 및 전체 용량을 제한한다", () => {

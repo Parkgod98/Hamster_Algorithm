@@ -126,8 +126,12 @@ export function setViewsConnected(value: boolean) {
   connected = value;
 }
 
-export function clearViewer(viewer: string) {
+export function clearViewer(viewer: string, notify = true) {
   if (gate?.viewer === viewer) { gate.cancelled = true; gate.release(); }
   connected = false; lastContact = 0;
-  invalidateViews(viewer, ['']);
+  if (notify) invalidateViews(viewer, ['']);
+  else {
+    for (const [k, entry] of entries) if (entry.viewer === viewer) entries.delete(k);
+    cancelViewLoads(viewer, ['']);
+  }
 }
