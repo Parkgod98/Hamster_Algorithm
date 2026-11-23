@@ -11,10 +11,39 @@ function stateMap(timeline) {
   return Object.fromEntries(timeline.map((item) => [item.date, item]));
 }
 
+test("달력에서 어제의 영어를 보충하고 오늘은 변경된 알고리즘 규칙만 적용한다", () => {
+  const yesterday = "2026-10-14", today = "2026-10-15", tomorrow = "2026-10-16";
+  const policy = (date) => date === yesterday
+    ? { allowed: ["algorithm", "english", "reading"], required: 2 }
+    : date === today ? { allowed: ["algorithm"], required: 1 } : { allowed: ["english"], required: 1 };
+  const days = [{ date: yesterday, credits: 1, postponed: true },
+    { date: today, credits: 1, postponed: false }, { date: tomorrow, credits: 0, postponed: false }];
+  const results = evaluateTimelineByDay(days, today, () => 2, policy, [
+    { target: yesterday, earned: today, goal: "english" }, { target: tomorrow, earned: today, goal: "english" },
+  ]);
+  assert.deepEqual(results.map((row) => [row.state,row.backlogCount,row.resolvedOn,row.completedGoals]),
+    [["complete",1,today,["algorithm","english"]], ["complete",0,today,["algorithm"]], ["complete",0,today,["english"]]]);
+});
+
 const base = [
   { date: "2026-09-15", credits: 0, postponed: true },
   { date: "2026-09-16", credits: 0, postponed: true },
 ];
+
+test("같은 날 알고리즘 상환과 영어 보충의 순서를 보존한다", () => {
+  const previous = "2026-10-14", today = "2026-10-15";
+  const config = () => ({ allowed: ["algorithm","english"], required: 1 });
+  for (const [time, expected] of [["10:00:00", 0], ["09:00:00", 0.5]]) {
+    const timeline = evaluateTimelineByDay([
+      { date: previous, credits: 0.5, postponed: true },
+      { date: today, credits: 0.5, creditEvents: [{ at: today + "T09:30:00+09:00", credits: 0.5 }], postponed: false },
+    ], today, () => 2, config, [{ target: previous, earned: today, at: today + "T" + time + "+09:00", goal: "english" }]);
+    assert.equal(timeline[1].algorithmCredits, expected);
+    assert.equal(timeline[0].completedGoals.includes("algorithm"), expected === 0);
+    assert.ok(timeline[0].completedGoals.includes("english"));
+    assert.equal(timeline[0].resolvedOn, today);
+  }
+});
 
 test("이틀 미룬 뒤 하루치 풀이는 가장 오래된 의무만 완전히 상환한다", () => {
   const timeline = evaluateTimeline([...base, { date: "2026-09-17", credits: 1, postponed: false }], "2026-09-17");

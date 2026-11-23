@@ -9,7 +9,7 @@ type Props = {
   studyId: string;
   studyDate: string;
   initialStatus: PostponementStatus | null;
-  onChanged: () => Promise<void>;
+  onChanged: (status: PostponementStatus, requestedAt: string) => void;
   onMessage: (message: string) => void;
 };
 type Payload = { status?: PostponementStatus; error?: string; duplicate?: boolean };
@@ -64,8 +64,7 @@ export function PostponementControl({ studyId, studyDate, initialStatus, onChang
         const text = payload.duplicate ? "이미 오늘 미루기를 신청했어요. 추가 사용되지 않았어요." : "오늘 미루기를 신청했어요.";
         setMessage(text);
         onMessage(text);
-        // A successful mutation invalidates the calendar; never pretend a failed refresh undid the write.
-        try { await onChanged(); } catch { onMessage("미루기는 저장됐어요. 달력을 새로고침해주세요."); }
+        if (nextStatus) onChanged(nextStatus, new Date().toISOString());
       }
     } catch (error) {
       if (abort.signal.aborted) return;

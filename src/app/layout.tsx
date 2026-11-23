@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { ClientEnhancements } from "@/components/client-enhancements";
 import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
+import "./account.css";
 import "./enhancements.css";
 import "./push.css";
 

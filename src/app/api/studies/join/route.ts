@@ -1,24 +1,21 @@
-import { NextResponse } from "next/server";
-import { DB } from "@/lib/db";
+import { communityError, communityResponse } from "@/lib/community-api";
+import { validCode, validId } from "@/lib/community";
+import { RPC } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 
 export async function POST(request: Request) {
   try {
     const user = await requireUser(request);
-    const { code } = await request.json() as { code?: string };
-    if (!code) return NextResponse.json({ error: "invite code required" }, { status: 400 });
-
-    const admin = createAdminClient();
-    const { data: study } = await admin.from(DB.studies).select("id").eq("invite_code", code).maybeSingle();
-    if (!study) return NextResponse.json({ error: "유효하지 않은 초대 링크입니다." }, { status: 404 });
-
-    const name = (user.user_metadata?.user_name || user.user_metadata?.preferred_username || user.email || "스터디원") as string;
-    await admin.from(DB.profiles).upsert({ id: user.id, github_login: user.user_metadata?.user_name ?? null, display_name: name });
-    const { error } = await admin.from(DB.studyMembers).upsert({ study_id: study.id, user_id: user.id, display_name: name, role: "member" });
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json({ ok: true, studyId: study.id });
+    const body = await request.json() as { code?: string; studyId?: string };
+    if (!body || !(body.code ? validCode(body.code) : validId(body.studyId))) {
+      return communityResponse({ error: "스터디 또는 초대 링크를 확인해 주세요." }, 400);
+    }
+    const { data, error } = await createAdminClient().rpc(RPC.joinCommunityStudy, {
+      p_actor: user.id, p_study_id: body.code ? null : body.studyId, p_code: body.code ?? null,
+    });
+    if (error) return communityError(error);
+    return communityResponse(data);
   } catch (error) {
-    if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    return NextResponse.json({ error: "unexpected error" }, { status: 500 });
+    return communityError(error);
   }
 }

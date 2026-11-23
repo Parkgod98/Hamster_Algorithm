@@ -1,0 +1,19 @@
+.goal-policy, .goal-policy > label, .day-goals, .day-goal, .day-goal label {
+  display: grid;
+  gap: .6rem;
+}
+.goal-policy .goal-options {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.goal-policy input[type=checkbox] { width: auto; }
+.goal-policy select, .goal-policy textarea, .day-goal input { max-width: 100%; font: inherit; }
+.goal-policy textarea { resize: vertical; }
+.day-goals { border-top: 1px solid var(--line, #ddddda); padding-top: 1rem; margin-block: 1rem; }
+.day-goal { margin-block: .4rem; }
+.day-goal .primary-button { justify-self: start; }
+.goal-instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
+.goal-records { list-style: none; margin: 0; padding: 0; }
+.goal-records li { padding-block: .4rem; }
+.goal-photo { display: block; width: auto; max-width: 100%; height: auto; max-height: 60vh; }

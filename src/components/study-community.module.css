@@ -1,0 +1,56 @@
+.shell {
+  margin: 0 auto;
+  max-width: 860px;
+  padding: clamp(1rem, 5vw, 3rem);
+}
+.heading, .card header, .memberList li, .actions, .tabs, .search {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+.heading, .card header, .memberList li { justify-content: space-between; }
+.heading h1 { margin: .5rem 0; }
+.heading a { color: #4a5949; font-weight: 650; }
+.tabs { margin: 1.2rem 0; border-bottom: 1px solid #d8dbd5; }
+.tabs button {
+  border: 0;
+  background: transparent;
+  padding: .7rem .35rem;
+  border-bottom: 3px solid transparent;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tabs button[aria-pressed="true"] { border-color: #334e37; color: #284b30; }
+.search { margin: .5rem 0 1rem; }
+.form, .field, .invite { display: grid; gap: .45rem; }
+.form { gap: 1rem; max-width: 560px; }
+.form button { justify-self: start; }
+.field, .invite label { color: #39403a; font-weight: 650; font-size: .9rem; }
+.field input, .field textarea, .field select, .search input, .form fieldset select, .form fieldset textarea {
+  color: #212621;
+  background: #fff;
+  border: 1px solid #bfc8bf;
+  border-radius: .55rem;
+  padding: .6rem .7rem;
+  font: inherit;
+  min-width: 0;
+}
+.search input { flex: 1; }
+.field textarea { resize: vertical; }
+.form fieldset { display: grid; gap: .7rem; border: 1px solid #d4dad4; padding: 1rem; border-radius: .65rem; }
+.form fieldset label { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+.form fieldset legend { font-weight: 700; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem; margin: 1rem 0; }
+.card { background: #fff; padding: 1.25rem; border: 1px solid #dbe0d9; border-radius: .85rem; min-width: 0; }
+.card header { align-items: baseline; }
+.card header h3 { margin: 0; font-size: 1.15rem; overflow-wrap: anywhere; }
+.card header span { flex-shrink: 0; font-size: .85rem; color: #536154; }
+.description { white-space: pre-wrap; overflow-wrap: anywhere; color: #555e54; margin: .65rem 0; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: .4rem .8rem; font-size: .85rem; margin: 1rem 0; }
+.facts dt { color: #556052; }
+.facts dd { margin: 0; }
+.invite { border-top: 1px solid #d8dbd5; padding-top: 1rem; margin-top: 2rem; }
+.memberList { padding: 0; list-style: none; }
+.memberList li { border-bottom: 1px solid #e6e9e3; padding: .5rem 0; }
+.memberList span { color: #51604f; font-size: .82rem; }
+.actions { flex-wrap: wrap; }

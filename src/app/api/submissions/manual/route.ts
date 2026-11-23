@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { manualProblemExternalId, manualSolvedAt, normalizeManualSubmissionInput } from "@/lib/manual-submission";
 import { shouldSendCompletion } from "@/lib/notification-rules";
+import { rulesForDate } from "@/lib/rule-version";
 import { sendStudyNotificationOnce } from "@/lib/push";
 import {
   appendProgressSubmissions,
   evaluateMemberProgress,
   loadStudyProgressContext,
+  notificationStateForProgress,
 } from "@/lib/server-progress";
 import { studyDateFromTimestamp } from "@/lib/study-day";
 import { createAdminClient, requireUser } from "@/lib/supabase";
@@ -33,7 +35,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "스터디 참여 전 날짜에는 등록할 수 없습니다." }, { status: 409 });
     }
 
-    const beforeState = evaluateMemberProgress(progressContext, user.id, currentStudyDate)?.state ?? null;
+    if (!rulesForDate(progressContext.versions, input.studyDate).ruleConfig.goals.allowed.includes("algorithm")) {
+      return NextResponse.json({ error: "이 날짜의 스터디 규칙에는 알고리즘 목표가 없습니다." }, { status: 409 });
+    }
+
+    const beforeState = notificationStateForProgress(evaluateMemberProgress(progressContext, user.id, currentStudyDate));
 
     const { data: problem, error: problemError } = await admin
       .from(DB.problems)
@@ -69,7 +75,7 @@ export async function POST(request: Request) {
 
     if (beforeState) {
       try {
-        const afterState = evaluateMemberProgress(progressContext, user.id, currentStudyDate)?.state ?? "missed";
+        const afterState = notificationStateForProgress(evaluateMemberProgress(progressContext, user.id, currentStudyDate));
         if (shouldSendCompletion(beforeState, afterState)) {
           await sendStudyNotificationOnce(admin, { studyId, userId: user.id, studyDate: currentStudyDate, kind: "completion" });
         }

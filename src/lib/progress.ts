@@ -1,4 +1,9 @@
-export type TimelineDay = { date: string; credits: number; postponed: boolean };
+import type { ManualGoal, StudyGoal } from "./rules";
+
+export type TimedCredit = { at: string; credits: number };
+export type TimelineDay = { date: string; credits: number; postponed: boolean; creditEvents?: TimedCredit[] };
+type DayPolicy = { allowed: StudyGoal[]; required: number };
+export type DatedCompletion = { target: string; earned: string; goal: ManualGoal; at?: string };
 export type TimelineState = "complete" | "in-progress" | "postponed" | "missed";
 export type TimelineResult = {
   date: string;
@@ -7,12 +12,14 @@ export type TimelineResult = {
   remaining: number;
   backlogCount: number;
   resolvedOn: string | null;
+  algorithmCredits: number;
+  completedGoals: StudyGoal[];
 };
 
 type Obligation = {
-  date: string;
-  remaining: number;
+  policy: DayPolicy;
   result: TimelineResult;
+  latestContribution: string;
 };
 
 type CreditLot = { earnedOn: string; credit: number };
@@ -27,40 +34,56 @@ export function evaluateTimelineByDay(
   days: TimelineDay[],
   currentDate: string,
   maxCarryDaysForDate: (date: string) => number,
+  policyForDate: (date: string) => DayPolicy = () => ({ allowed: ["algorithm"], required: 1 }),
+  completions: DatedCompletion[] = [],
 ): TimelineResult[] {
   const ordered = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  const obligations: Obligation[] = [];
+  const algorithmQueue: Obligation[] = [];
+  const byDate = new Map<string, Obligation>();
+  const actions = new Map<string, DatedCompletion[]>();
+  for (const completion of completions) {
+    if (completion.earned < completion.target && dayDistance(completion.earned, completion.target) > maxCarryDaysForDate(completion.target)) continue;
+    const applies = completion.earned > completion.target ? completion.earned : completion.target;
+    const group = actions.get(applies) ?? [];
+    group.push(completion);
+    actions.set(applies, group);
+  }
   const carryLots: CreditLot[] = [];
   const results: TimelineResult[] = [];
   let oldestUnresolvedIndex = 0;
   let backlogCount = 0;
 
-  const advanceOldestUnresolved = () => {
-    while (
-      oldestUnresolvedIndex < obligations.length
-      && obligations[oldestUnresolvedIndex].remaining <= EPSILON
-    ) {
-      oldestUnresolvedIndex += 1;
+  const update = (obligation: Obligation, earnedOn: string) => {
+    const { result, policy } = obligation;
+    if (result.state === "complete") return;
+    if (earnedOn > obligation.latestContribution) obligation.latestContribution = earnedOn;
+    const partial = result.completedGoals.includes("algorithm") ? 0 : result.algorithmCredits;
+    result.available = Math.min(1, (result.completedGoals.length + partial) / policy.required);
+    result.remaining = normalize(1 - result.available);
+    if (result.completedGoals.length >= policy.required) {
+      result.state = "complete";
+      result.resolvedOn = obligation.latestContribution;
+      backlogCount -= 1;
     }
   };
 
-  const applyCredit = (lot: CreditLot, resolvedOn: string) => {
-    advanceOldestUnresolved();
-    while (lot.credit > EPSILON && oldestUnresolvedIndex < obligations.length) {
-      const obligation = obligations[oldestUnresolvedIndex];
-      const amount = Math.min(obligation.remaining, lot.credit);
-      obligation.remaining = normalize(obligation.remaining - amount);
-      lot.credit = normalize(lot.credit - amount);
-      obligation.result.remaining = obligation.remaining;
-      obligation.result.available = normalize(1 - obligation.remaining);
-
-      if (obligation.remaining <= EPSILON) {
-        obligation.result.state = "complete";
-        obligation.result.resolvedOn = resolvedOn;
-        backlogCount -= 1;
+  const applyCredit = (lot: CreditLot) => {
+    while (lot.credit > EPSILON && oldestUnresolvedIndex < algorithmQueue.length) {
+      const obligation = algorithmQueue[oldestUnresolvedIndex];
+      const { result } = obligation;
+      if (result.state === "complete" || result.algorithmCredits >= 1) {
         oldestUnresolvedIndex += 1;
-        advanceOldestUnresolved();
+        continue;
       }
+      const amount = Math.min(1 - result.algorithmCredits, lot.credit);
+      lot.credit = normalize(lot.credit - amount);
+      result.algorithmCredits += amount;
+      if (1 - result.algorithmCredits <= EPSILON) {
+        result.algorithmCredits = 1;
+        result.completedGoals.push("algorithm");
+        oldestUnresolvedIndex += 1;
+      }
+      update(obligation, lot.earnedOn);
     }
   };
 
@@ -75,20 +98,50 @@ export function evaluateTimelineByDay(
       remaining: 1,
       backlogCount: 0,
       resolvedOn: null,
+      algorithmCredits: 0,
+      completedGoals: [],
     };
-    obligations.push({ date: day.date, remaining: 1, result });
+    const policy = policyForDate(day.date);
+    const obligation = { policy, result, latestContribution: "" };
+    byDate.set(day.date, obligation);
+    if (policy.allowed.includes("algorithm")) algorithmQueue.push(obligation);
     results.push(result);
     backlogCount += 1;
 
-    for (const lot of carryLots) {
-      if (lot.credit <= EPSILON) continue;
-      applyCredit(lot, lot.earnedOn);
+    function applyManual(item: DatedCompletion) {
+      const target = byDate.get(item.target);
+      if (!target || !target.policy.allowed.includes(item.goal) || target.result.completedGoals.includes(item.goal)) return;
+      target.result.completedGoals.push(item.goal);
+      update(target, item.earned);
+    }
+    const earnedToday: DatedCompletion[] = [];
+    for (const item of actions.get(day.date) ?? []) {
+      if (item.earned < day.date) applyManual(item);
+      else earnedToday.push(item);
     }
 
-    if (day.credits > EPSILON) {
-      const todayLot = { earnedOn: day.date, credit: day.credits };
-      applyCredit(todayLot, day.date);
-      if (todayLot.credit > EPSILON) carryLots.push(todayLot);
+    for (const lot of carryLots) {
+      if (lot.credit <= EPSILON) continue;
+      applyCredit(lot);
+    }
+
+    function earn(credit: number) {
+      if (credit <= EPSILON) return;
+      const todayLot = { earnedOn: day.date, credit };
+      applyCredit(todayLot);
+      if (todayLot.credit > EPSILON && policy.allowed.includes("algorithm")) carryLots.push(todayLot);
+    }
+    if (earnedToday.length && day.creditEvents?.length) {
+      // SQL splits a day's aggregates at manual check-in times. A later
+      // English make-up must not undo an earlier FIFO algorithm allocation.
+      const events = [
+        ...earnedToday.map((item) => ({ time: item.at ? eventTime(item.at) : 0, apply: () => applyManual(item) })),
+        ...day.creditEvents.map((event) => ({ time: eventTime(event.at), apply: () => earn(event.credits) })),
+      ].sort((a, b) => a.time - b.time);
+      for (const event of events) event.apply();
+    } else {
+      for (const item of earnedToday) applyManual(item);
+      earn(day.credits);
     }
 
     cleanupCarry(carryLots);
@@ -145,4 +198,11 @@ function addStudyDaysLocal(date: string, days: number) {
 
 function dayDistance(from: string, to: string) {
   return Math.floor((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+
+// PostgreSQL keeps microseconds. Preserve their order on either side of a
+// check-in even when JavaScript Date places two events in one millisecond.
+function eventTime(timestamp: string) {
+  const fraction = timestamp.match(/\.(\d+)/)?.[1] ?? "";
+  return Date.parse(timestamp) * 1000 + Number(fraction.padEnd(6, "0").slice(3, 6));
 }

@@ -14,16 +14,13 @@ export default function Home() {
   return <main className="landing-shell">
     <nav className="landing-nav">
       <div className="landing-brand"><span>🐹</span><strong>햄쮸터</strong></div>
-      <span className="landing-badge">Algorithm Study Automation</span>
     </nav>
 
     <section className="landing-hero">
       <div className="landing-copy">
-        <p className="landing-kicker">GitHub 풀이 기록으로 자동 인증</p>
-        <h1>문제만 풀면,<br /><span>인증은 끝.</span></h1>
-        <p className="landing-description">BaekjoonHub가 남긴 commit을 햄쮸터가 읽고, 스터디 규칙에 맞춰 자동으로 인증합니다. 캡처도, Notion 체크도 필요 없습니다.</p>
+        <h1>함께 공부하고,<br /><span>매일 인증해요.</span></h1>
+        <p className="landing-description">알고리즘 풀이를 자동으로 모으고, 영어 공부를 기록해요. 스터디마다 정한 목표를 달력에서 함께 확인하세요.</p>
         <AuthPanel />
-        <div className="landing-trust"><span>✓ Repository는 읽기 전용</span><span>✓ 오전 4시 Study Day</span><span>✓ PWA 설치 지원</span></div>
       </div>
 
       <div className="product-preview" aria-label="햄쮸터 월간 인증 캘린더 미리보기">

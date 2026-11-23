@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runtime} from './helpers/finalize-runtime.mjs';
 
+test("해당 날짜의 규칙이 없으면 최신 설정을 사용해 벌금을 만들지 않는다", async () => {
+  const env = runtime();
+  env.rows[env.table.versions].length = 0;
+  const result = await env.request();
+  assert.equal(result.status, 500);
+  assert.equal(result.body.phase, "read");
+  assert.equal(env.writes.length, 0);
+});
+
 for(const cap of [1000,100])test(`전체 조회: ${cap}행 응답 제한에서도 1004번째 상환을 읽는다`,async()=>{
   const env=runtime({cap,joined:'2026-10-16'});
   for(let i=0;i<1002;i++)env.solve('2026-10-16','Bronze V');
@@ -9,10 +18,19 @@ for(const cap of [1000,100])test(`전체 조회: ${cap}행 응답 제한에서�
   assert.equal((await env.request()).status,200);assert.equal(env.writes.length,0);
   assert.ok(env.queries.some(q=>q.table===env.table.submissions&&q.from>=1000));
 });
-for(const key of ['studies','members','submissions','postponements','versions','penalties'])test(`${key} 조회 실패는 500이며 벌금 저장이 없다`,async()=>{
+for(const key of ['studies','members','submissions','postponements','versions','penalties','goals'])test(`${key} 조회 실패는 500이며 벌금 저장이 없다`,async()=>{
   const env=runtime();env.fail(key);const r=await env.request();
   assert.equal(r.status,500);assert.equal(r.body.phase,'read');assert.equal(env.writes.length,0);
   assert.ok(!JSON.stringify(r).includes('private database detail'));
+});
+
+test("목표가 여럿이어도 미제출은 하루 한 번이며 마감 뒤 영어 보충은 원장을 바꾸지 않는다", async () => {
+  const env = runtime();
+  env.rows[env.table.versions][0].rule_config = { goals: { allowed: ["algorithm","english","reading"], mode:"count", required:2, englishRule:"회화" } };
+  env.rows[env.table.goals].push({ study_id:"study", user_id:"alice", study_date:"2026-10-17", goal:"english", created_at:"2026-10-18T03:59:59+09:00" },
+    { study_id:"study", user_id:"alice", study_date:"2026-10-17", goal:"reading", created_at:"2026-10-18T04:00:00+09:00" });
+  assert.equal((await env.request()).status, 200);
+  assert.deepEqual(env.writes.map((row) => row.amount), [10000]);
 });
 test('중간 페이지 오류는 부분 자료로 벌금을 만들지 않는다',async()=>{
   const env=runtime();for(let i=0;i<600;i++)env.solve('2026-10-17','Bronze V');
@@ -57,7 +75,7 @@ test('가입 전 풀이와 다른 사용자·스터디 풀이는 상환에 쓰�
   await env.request();assert.equal(env.writes.length,1);assert.equal(env.writes[0].amount,10000);
 });
 test('날짜별 규칙을 사용하고 미래 규칙은 적용하지 않는다',async()=>{
-  const env=runtime();env.rows[env.table.versions].push({study_id:'study',effective_from:'2026-10-17',rule_config:{bojGoldCount:2,penalties:{1:12000}},max_presolve_days:2},
+  const env=runtime();env.rows[env.table.versions].splice(0,1,{study_id:'study',effective_from:'2026-10-17',rule_config:{bojGoldCount:2,penalties:{1:12000}},max_presolve_days:2},
     {study_id:'study',effective_from:'2026-10-18',rule_config:{bojGoldCount:1,penalties:{1:99000}},max_presolve_days:2});
   env.solve('2026-10-17');await env.request();assert.equal(env.writes[0].amount,12000);
 });

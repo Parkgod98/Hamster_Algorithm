@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { browserSupabase } from "@/lib/supabase-browser";
+import { browserSupabase, forgetAccountSession } from "@/lib/supabase-browser";
 import { createCalendarCache, type CalendarSnapshot } from "@/lib/calendar-cache";
 import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 
@@ -40,7 +40,8 @@ export function useCalendarData<T extends CalendarSnapshot>() {
         cache.clear(); liveData.current = null; setData(null);
       }
       viewer.current = session.user.id;
-      const scope = { viewerId: session.user.id, studyId: liveData.current?.study?.id ?? "", month };
+      const studyId = new URLSearchParams(window.location.search).get("studyId") || liveData.current?.study?.id || localStorage.getItem("hamster-study-id") || "";
+      const scope = { viewerId: session.user.id, studyId, month };
       if (force) {
         if (scope.studyId) cache.invalidateStudy(scope.viewerId, scope.studyId);
         else cache.clear();
@@ -56,13 +57,17 @@ export function useCalendarData<T extends CalendarSnapshot>() {
       if (cached) apply(cached.data);
       if (cached?.fresh) { setRefreshing(false); return cached.data; }
       // An old snapshot is display-only. Disable its action while revalidating.
-      if (liveData.current) setData({ ...liveData.current, todayPostponement: null });
+      if (liveData.current?.todayPostponement?.canPostpone) setData({ ...liveData.current, todayPostponement: null });
       setRefreshing(true);
       setError(""); setWarning("");
       const next = await cache.load(scope, async (signal) => {
-        const response = await fetch(`/api/dashboard?${new URLSearchParams({ month })}`, {
+        const response = await fetch(`/api/dashboard?${new URLSearchParams({ month, studyId })}`, {
           headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store", signal,
         });
+        if (response.status === 401 && session.access_token.startsWith("hs1_")) {
+          forgetAccountSession();
+          window.location.replace("/");
+        }
         if (response.status === 401 || response.status === 403) throw new CalendarAccessError("로그인과 스터디 참여 상태를 다시 확인해주세요.");
         if (!response.ok) throw new Error("달력을 불러오지 못했습니다.");
         return await response.json() as T;
@@ -120,10 +125,19 @@ export function useCalendarData<T extends CalendarSnapshot>() {
     return () => window.clearTimeout(timer);
   }, [studyDate, cache, run]);
 
+  const updateConfirmed = useCallback((change: (current: T) => T) => {
+    const previous = liveData.current;
+    if (!previous?.study) return;
+    sequence.current += 1;
+    cache.invalidateStudy(previous.currentUserId, previous.study.id);
+    const patched = change(previous);
+    liveData.current = patched;
+    setData(patched);
+  }, [cache]);
   const reload = useCallback(async (month?: string) => { await run(month, true); }, [run]);
   const navigate = useCallback((month?: string) => run(month), [run]);
   const clear = useCallback(() => {
     sequence.current += 1; cache.clear(); liveData.current = null; viewer.current = ""; setData(null);
   }, [cache]);
-  return { data, error, warning, refreshing, month: data?.month ?? "", selectedDate, setSelectedDate, reload, navigate, clear };
+  return { data, error, warning, refreshing, month: data?.month ?? "", selectedDate, setSelectedDate, reload, navigate, clear, updateConfirmed };
 }

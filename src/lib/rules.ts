@@ -1,6 +1,36 @@
 import type { Platform } from "./types";
 
+export const GOAL_LABELS = { algorithm: "알고리즘", english: "영어", reading: "독서" } as const;
+export type StudyGoal = keyof typeof GOAL_LABELS;
+export type ManualGoal = Exclude<StudyGoal, "algorithm">;
+export type GoalPolicy = {
+  allowed: StudyGoal[];
+  mode: "all" | "count";
+  required: number;
+  englishRule: string;
+};
+export const DEFAULT_GOALS: GoalPolicy = { allowed: ["algorithm"], mode: "all", required: 1, englishRule: "" };
+
+export function validGoalPolicy(value: unknown): value is GoalPolicy {
+  if (!value || typeof value !== "object") return false;
+  const policy = value as Partial<GoalPolicy>;
+  const allowed = policy.allowed;
+  return Array.isArray(allowed) && allowed.length > 0 && allowed.length <= Object.keys(GOAL_LABELS).length
+    && new Set(allowed).size === allowed.length && allowed.every((goal) => Object.hasOwn(GOAL_LABELS, goal))
+    && (policy.mode === "all" || policy.mode === "count") && Number.isInteger(policy.required)
+    && policy.required! >= 1 && policy.required! <= allowed.length
+    && (policy.mode !== "all" || policy.required === allowed.length)
+    && typeof policy.englishRule === "string" && policy.englishRule.length <= 4000;
+}
+
+export function goalPolicy(config: unknown): GoalPolicy {
+  if (!config || typeof config !== "object" || !("goals" in config)) return DEFAULT_GOALS;
+  if (!validGoalPolicy(config.goals)) throw new Error("Invalid stored goal policy");
+  return config.goals;
+}
+
 export type StudyRuleConfig = {
+  goals: GoalPolicy;
   bojBronzeCount: number;
   bojSilverCount: number;
   bojGoldCount: number;
@@ -13,6 +43,7 @@ export type StudyRuleConfig = {
 };
 
 export const DEFAULT_RULE_CONFIG: StudyRuleConfig = {
+  goals: DEFAULT_GOALS,
   bojBronzeCount: 3,
   bojSilverCount: 2,
   bojGoldCount: 1,
@@ -46,6 +77,7 @@ export function normalizeRuleConfig(value: unknown): StudyRuleConfig {
     ? raw.penalties as Record<string, unknown>
     : {};
   return {
+    goals: goalPolicy(raw),
     bojBronzeCount: safePositiveInt(raw.bojBronzeCount, DEFAULT_RULE_CONFIG.bojBronzeCount),
     bojSilverCount: safePositiveInt(raw.bojSilverCount, DEFAULT_RULE_CONFIG.bojSilverCount),
     bojGoldCount: safePositiveInt(raw.bojGoldCount, DEFAULT_RULE_CONFIG.bojGoldCount),

@@ -103,7 +103,7 @@ export function GrowthStatsSection({
       void (async () => {
         const access = await accessToken();
         if (!access || cancelled) return;
-        const params = new URLSearchParams({ month, userId: selectedUserId });
+        const params = new URLSearchParams({ month, userId: selectedUserId, studyId });
         const response = await fetch(`/api/growth-stats?${params.toString()}`, {
           headers: { Authorization: `Bearer ${access}` },
         });

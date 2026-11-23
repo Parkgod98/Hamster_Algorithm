@@ -40,7 +40,7 @@ async function handle(request: Request, write: boolean) {
     const admin = createAdminClient();
     const context = await loadStudyProgressContext(admin, input.studyId, current, [user.id]);
     if (!context || !context.members.has(user.id)) return json({ error: "forbidden" }, 403);
-    const rules = rulesForDate(context.versions, current, context.fallback);
+    const rules = rulesForDate(context.versions, current);
     const progress = evaluateMemberProgress(context, user.id, current);
     const makeStatus = (): PostponementStatus => getPostponementStatus({
       studyDate: current,

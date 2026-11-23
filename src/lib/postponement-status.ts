@@ -53,10 +53,10 @@ export function getPostponementStatus(input: Input): PostponementStatus {
   if (alreadyPostponed) return { ...status, reason: "already-postponed", message: "이미 오늘 미루기를 신청했어요." };
   if (!progress || progress.date !== studyDate || !Number.isInteger(progress.backlogCount)
     || progress.backlogCount < 0) return status;
-  if (progress.state === "complete" && progress.backlogCount === 0) {
-    return { ...status, reason: "complete", message: "오늘까지 필요한 인증을 모두 완료했어요." };
+  if (progress.state === "complete") {
+    return { ...status, reason: "complete", message: "오늘 인증을 완료했어요." };
   }
-  if (progress.backlogCount === 0 || progress.state === "complete") return status;
+  if (progress.backlogCount === 0) return status;
   status.requiredRepaymentDays = Math.max(0, progress.backlogCount - limit);
   if (limit === 0) return { ...status, reason: "disabled", message: "이 스터디는 미루기를 사용하지 않도록 설정되어 있어요." };
   if (now >= deadline) {

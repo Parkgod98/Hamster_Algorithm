@@ -1,29 +1,24 @@
 import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
-import { addStudyDays, studyDateFromTimestamp, studyDayStartTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
-import { normalizeRuleConfig, submissionCredit } from "@/lib/rules";
-import { dateRange, evaluateTimelineByDay } from "@/lib/progress";
-import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "@/lib/rule-version";
+import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
+import { normalizeRuleConfig } from "@/lib/rules";
+import { dateRange } from "@/lib/progress";
+import { normalizeRuleVersions, rulesForDate, type RuleVersionRow } from "@/lib/rule-version";
 import { getPostponementStatus, type PostponementStatus } from "@/lib/postponement-status";
 import { readAllRows } from "@/lib/read-all-rows";
-import type { Platform } from "@/lib/types";
+import { readGoalCompletions, evaluateStudyTimeline, groupDailyCredits, type DailySolutions } from "@/lib/server-progress";
+import type { StudyGoal } from "@/lib/rules";
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
-type CreditProblem = { platform: Platform; difficulty: string };
-type ProblemRow = CreditProblem & { external_id: string; title: string };
 type MemberRow = { user_id: string; display_name: string; joined_at: string };
-type CreditRow = { user_id: string; solved_at: string; hamster_problems: unknown };
-type SubmissionRow = CreditRow & { source: string };
 type PostponementRow = { user_id: string; study_date: string; requested_at: string };
-type PenaltyRow = { user_id: string; amount: number | null; study_date: string; consecutive_misses: number };
-type RepoRow = { id: string; full_name: string };
 type DayMember = {
   userId: string; name: string;
   state: "inactive" | "upcoming" | "presolved" | "complete" | "in-progress" | "postponed" | "missed";
-  credits: number; directCredits: number; penalty: number; consecutiveMisses: number; postponedAt: string | null;
+  completedGoals: StudyGoal[]; credits: number; directCredits: number; postponedAt: string | null;
   resolvedOn: string | null;
-  submissions: Array<Record<string, unknown>>;
+
 };
 
 function json(body: unknown, status = 200) {
@@ -41,11 +36,6 @@ function monthBounds(month: string) {
   const [year, monthNumber] = month.split("-").map(Number);
   return { start: `${month}-01`, end: new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10) };
 }
-function problemFromRelation<T extends CreditProblem>(value: unknown): T {
-  const problem = Array.isArray(value) ? value[0] : value;
-  if (!problem || typeof problem !== "object") throw new Error("Submission problem missing");
-  return problem as T;
-}
 function groupByUser<T extends { user_id: string }>(rows: T[]) {
   const groups = new Map<string, T[]>();
   for (const row of rows) {
@@ -55,132 +45,75 @@ function groupByUser<T extends { user_id: string }>(rows: T[]) {
   }
   return groups;
 }
-function monthStats(days: Array<{ date: string; members: DayMember[] }>, members: MemberRow[], current: string) {
-  return members.map((member) => {
-    const states = days.filter((day) => day.date <= current)
-      .map((day) => day.members.find((item) => item.userId === member.user_id))
-      .filter((item): item is DayMember => Boolean(item) && item?.state !== "inactive");
-    const complete = states.filter((item) => item.state === "complete" || item.state === "presolved").length;
-    const missed = states.filter((item) => item.state === "missed").length;
-    const postponed = states.filter((item) => item.state === "postponed").length;
-    const required = complete + missed + states.filter((item) => item.state === "in-progress").length;
-    let streak = 0;
-    for (let index = states.length - 1; index >= 0; index -= 1) {
-      const state = states[index].state;
-      if (state === "postponed") continue;
-      if (state === "complete" || state === "presolved") streak += 1;
-      else break;
-    }
-    return { userId: member.user_id, name: member.display_name, complete, missed, postponed,
-      totalPenalty: states.reduce((sum, item) => sum + item.penalty, 0),
-      completionRate: required > 0 ? Math.round((complete / required) * 100) : 0, streak };
-  });
-}
-
 export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
     const admin = createAdminClient();
-    const membershipResult = await admin.from(DB.studyMembers).select("study_id,role").eq("user_id", user.id).limit(1).maybeSingle();
+    const requestedStudy = new URL(request.url).searchParams.get("studyId");
+    let memberships = admin.from(DB.studyMembers).select("study_id,role").eq("user_id", user.id);
+    if (requestedStudy) memberships = memberships.eq("study_id", requestedStudy);
+    const membershipResult = await memberships.order("joined_at").order("study_id").limit(1).maybeSingle();
     if (membershipResult.error) throw membershipResult.error;
     const membership = membershipResult.data;
     const current = studyDateFromTimestamp(new Date().toISOString());
     const month = requestedMonth(request.url, current);
     const bounds = monthBounds(month);
+    if (requestedStudy && !membership) return json({ error: "forbidden" }, 403);
     if (!membership) return json({ study: null, members: [], repositories: [], days: [],
       summary: { complete: 0, postponed: 0, missed: 0, inProgress: 0 }, statistics: [], ruleHistory: [],
       currentUserId: user.id, studyDate: current, month, todayPostponement: null });
 
-    const studyResult = await admin.from(DB.studies)
-      .select("id,name,invite_code,created_at,max_presolve_days,max_consecutive_postpone,postpone_deadline_hour,postpone_deadline_minute,rule_config")
-      .eq("id", membership.study_id).single();
+    const [studyResult, rawVersions, memberRows] = await Promise.all([
+      admin.from(DB.studies).select("id,name").eq("id", membership.study_id).single(),
+      readAllRows<RuleVersionRow>((from, to) => admin.from(DB.studyRuleVersions)
+        .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days")
+        .eq("study_id", membership.study_id).lte("effective_from", addStudyDays(current, 1))
+        .order("effective_from", { ascending: true }).range(from, to)),
+      readAllRows<MemberRow>((from, to) => admin.from(DB.studyMembers).select("user_id,display_name,joined_at")
+        .eq("study_id", membership.study_id).order("joined_at", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
+    ]);
     if (studyResult.error) throw studyResult.error;
     const study = studyResult.data;
     if (!study) return json({ error: "study not found" }, 404);
-    const fallback: EffectiveRules = {
-      effectiveFrom: studyDateFromTimestamp(study.created_at), ruleConfig: normalizeRuleConfig(study.rule_config),
-      postponeDeadlineHour: study.postpone_deadline_hour, postponeDeadlineMinute: study.postpone_deadline_minute,
-      maxConsecutivePostpone: study.max_consecutive_postpone, maxPresolveDays: study.max_presolve_days,
-    };
-    const [rawVersions, memberRows, repos, penaltyRows] = await Promise.all([
-      readAllRows<RuleVersionRow>((from, to) => admin.from(DB.studyRuleVersions)
-        .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days,changed_by,created_at")
-        .eq("study_id", study.id).lte("effective_from", current)
-        .order("effective_from", { ascending: true }).range(from, to)),
-      readAllRows<MemberRow>((from, to) => admin.from(DB.studyMembers).select("user_id,display_name,joined_at")
-        .eq("study_id", study.id).order("joined_at", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
-      readAllRows<RepoRow>((from, to) => admin.from(DB.repositoryConnections).select("id,full_name")
-        .eq("study_id", study.id).eq("user_id", user.id).eq("active", true).order("id", { ascending: true }).range(from, to)),
-      readAllRows<PenaltyRow>((from, to) => admin.from(DB.penalties).select("user_id,amount,study_date,consecutive_misses")
-        .eq("study_id", study.id).gte("study_date", bounds.start).lte("study_date", bounds.end)
-        .order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
-    ]);
     const versions = normalizeRuleVersions(rawVersions, normalizeRuleConfig);
-    const currentRules = rulesForDate(versions, current, fallback);
+    const currentRules = rulesForDate(versions, current);
+    const scheduledRules = versions.find((version) => version.effectiveFrom > current);
     const monthDates = dateRange(bounds.start, bounds.end);
-    const maxCarry = Math.max(fallback.maxPresolveDays, ...versions.map((version) => version.maxPresolveDays), 0);
+    const maxCarry = Math.max(...versions.map((version) => version.maxPresolveDays), 0);
     const futureEnd = addStudyDays(current, maxCarry);
     // Later repayments must update old-month icons. Never truncate the FIFO input to the visible month.
     const evaluationEnd = bounds.end < current ? current : bounds.end < futureEnd ? bounds.end : futureEnd;
     const memberIds = memberRows.map((member) => member.user_id);
     const earliestJoined = memberRows.map((member) => studyDateFromTimestamp(member.joined_at)).sort()[0];
-    const progressStart = earliestJoined ? studyDayStartTimestamp(earliestJoined) : "";
-    const detailStart = earliestJoined && earliestJoined > bounds.start ? earliestJoined : bounds.start;
-    const detailEnd = bounds.end < current ? bounds.end : current;
-    const [creditRows, detailRows, postponementRows] = await Promise.all([
-      earliestJoined && earliestJoined <= current ? readAllRows<CreditRow>((from, to) => admin.from(DB.submissions)
-        .select("user_id,solved_at,hamster_problems(platform,difficulty)")
-        .eq("study_id", study.id).in("user_id", memberIds)
-        .gte("solved_at", progressStart).lt("solved_at", studyDayEndExclusiveTimestamp(current))
-        .order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to)) : Promise.resolve([]),
-      memberIds.length && detailStart <= detailEnd ? readAllRows<SubmissionRow>((from, to) => admin.from(DB.submissions)
-        .select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)")
-        .eq("study_id", study.id).in("user_id", memberIds)
-        .gte("solved_at", studyDayStartTimestamp(detailStart)).lt("solved_at", studyDayEndExclusiveTimestamp(detailEnd))
-        .order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to)) : Promise.resolve([]),
+    const [creditRows, goalRows, postponementRows] = await Promise.all([
+      earliestJoined && earliestJoined <= current ? readAllRows<DailySolutions>((from, to) => admin.from(DB.dailySolutionCounts)
+        .select("user_id,study_date,platform,difficulty,solves,solved_through").eq("study_id", study.id)
+        .gte("study_date", earliestJoined).lte("study_date", current)
+        .order("study_date").order("user_id").order("platform").order("difficulty").order("solved_through").range(from, to)) : [],
+      readGoalCompletions(admin, study.id, evaluationEnd, memberIds),
       earliestJoined && earliestJoined <= current ? readAllRows<PostponementRow>((from, to) => admin.from(DB.postponements)
-        .select("user_id,study_date,requested_at").eq("study_id", study.id).in("user_id", memberIds)
+        .select("user_id,study_date,requested_at").eq("study_id", membership.study_id).in("user_id", memberIds)
         .gte("study_date", earliestJoined).lte("study_date", current)
         .order("study_date", { ascending: true }).order("user_id", { ascending: true }).range(from, to)) : Promise.resolve([]),
     ]);
     const creditsByUser = groupByUser(creditRows);
-    const detailsByUser = groupByUser(detailRows);
+    const goalsByUser = groupByUser(goalRows);
     const postponementsByUser = groupByUser(postponementRows);
-    const penaltiesByUser = groupByUser(penaltyRows);
+
     const days = monthDates.map((date) => ({ date, members: [] as DayMember[] }));
     const dayMap = new Map(days.map((day) => [day.date, day]));
     let todayPostponement: PostponementStatus | null = null;
     for (const member of memberRows) {
       const joinedDate = studyDateFromTimestamp(member.joined_at);
-      const creditMap = new Map<string, number>();
-      const submissionsByDate = new Map<string, Array<Record<string, unknown>>>();
-      for (const submission of creditsByUser.get(member.user_id) ?? []) {
-        const date = studyDateFromTimestamp(submission.solved_at);
-        if (date < joinedDate) continue;
-        const problem = problemFromRelation<CreditProblem>(submission.hamster_problems);
-        const credit = submissionCredit(problem.platform, problem.difficulty, rulesForDate(versions, date, fallback).ruleConfig);
-        creditMap.set(date, (creditMap.get(date) ?? 0) + credit);
-      }
-      for (const submission of detailsByUser.get(member.user_id) ?? []) {
-        const date = studyDateFromTimestamp(submission.solved_at);
-        if (date < joinedDate) continue;
-        const problem = problemFromRelation<ProblemRow>(submission.hamster_problems);
-        const credit = submissionCredit(problem.platform, problem.difficulty, rulesForDate(versions, date, fallback).ruleConfig);
-        const list = submissionsByDate.get(date) ?? [];
-        list.push({ platform: problem.platform, problemId: problem.external_id, title: problem.title, difficulty: problem.difficulty,
-          credit, solvedAt: submission.solved_at, source: submission.source });
-        submissionsByDate.set(date, list);
-      }
+      const creditMap = groupDailyCredits(creditsByUser.get(member.user_id) ?? [], versions, joinedDate, current);
       const memberPostponements = postponementsByUser.get(member.user_id) ?? [];
       const postponed = new Set(memberPostponements.map((item) => item.study_date));
       const requestedAtMap = new Map(memberPostponements.map((item) => [item.study_date, item.requested_at]));
-      const penaltyMap = new Map((penaltiesByUser.get(member.user_id) ?? [])
-        .map((item) => [item.study_date, { amount: item.amount ?? 0, consecutiveMisses: item.consecutive_misses }]));
-      const timelineMap = new Map<string, ReturnType<typeof evaluateTimelineByDay>[number]>();
+      const timelineMap = new Map<string, ReturnType<typeof evaluateStudyTimeline>[number]>();
       if (joinedDate <= evaluationEnd) {
-        const timeline = evaluateTimelineByDay(
-          dateRange(joinedDate, evaluationEnd).map((date) => ({ date, credits: creditMap.get(date) ?? 0, postponed: postponed.has(date) })),
-          current, (date) => rulesForDate(versions, date, fallback).maxPresolveDays,
+        const timeline = evaluateStudyTimeline(
+          dateRange(joinedDate, evaluationEnd).map((date) => ({ date, ...(creditMap.get(date) ?? { credits: 0 }), postponed: postponed.has(date) })),
+          current, versions, goalsByUser.get(member.user_id) ?? [],
         );
         for (const item of timeline) timelineMap.set(item.date, item);
       }
@@ -191,18 +124,17 @@ export async function GET(request: Request) {
       });
       for (const date of monthDates) {
         const day = dayMap.get(date); if (!day) continue;
-        const directCredits = creditMap.get(date) ?? 0;
+        const directCredits = creditMap.get(date)?.credits ?? 0;
         const timeline = timelineMap.get(date);
         let state: DayMember["state"];
         if (date < joinedDate) state = "inactive";
         else if (date > current) state = timeline?.state === "complete" ? "presolved" : "upcoming";
         else state = timeline?.state ?? (date === current ? "in-progress" : "missed");
-        const penalty = penaltyMap.get(date);
+
         day.members.push({ userId: member.user_id, name: member.display_name, state,
-          credits: Math.min(1, timeline?.available ?? directCredits), directCredits,
-          penalty: penalty?.amount ?? 0, consecutiveMisses: penalty?.consecutiveMisses ?? 0,
+          completedGoals: timeline?.completedGoals ?? [], credits: Math.min(1, timeline?.available ?? directCredits), directCredits,
           postponedAt: requestedAtMap.get(date) ?? null, resolvedOn: timeline?.resolvedOn ?? null,
-          submissions: submissionsByDate.get(date) ?? [] });
+        });
       }
     }
     const summary = { complete: 0, postponed: 0, missed: 0, inProgress: 0 };
@@ -212,16 +144,13 @@ export async function GET(request: Request) {
       else if (member.state === "missed") summary.missed += 1;
       else if (member.state === "in-progress") summary.inProgress += 1;
     }
-    const memberName = new Map(memberRows.map((member) => [member.user_id, member.display_name]));
-    const ruleHistory = [...rawVersions].reverse().map((version) => ({ effectiveFrom: version.effective_from,
-      changedBy: version.changed_by ? memberName.get(version.changed_by) ?? "스터디원" : "초기 설정", createdAt: version.created_at ?? null }));
     return json({
-      study: { id: study.id, name: study.name, inviteCode: study.invite_code, role: membership.role, rules: currentRules.ruleConfig,
+      study: { id: study.id, name: study.name, role: membership.role, rules: currentRules.ruleConfig,
         postponeDeadlineHour: currentRules.postponeDeadlineHour, postponeDeadlineMinute: currentRules.postponeDeadlineMinute,
-        maxConsecutivePostpone: currentRules.maxConsecutivePostpone, maxPresolveDays: currentRules.maxPresolveDays },
+        maxConsecutivePostpone: currentRules.maxConsecutivePostpone, maxPresolveDays: currentRules.maxPresolveDays,
+        scheduledRules: scheduledRules ?? null },
       members: memberRows.map((member) => ({ userId: member.user_id, name: member.display_name })),
-      repositories: repos.map((repo) => ({ id: repo.id, fullName: repo.full_name })),
-      days, summary, statistics: monthStats(days, memberRows, current), ruleHistory, todayPostponement,
+      days, summary, todayPostponement,
       currentUserId: user.id, studyDate: current, month,
     });
   } catch (error) {

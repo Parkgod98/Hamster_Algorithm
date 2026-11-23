@@ -1,4 +1,9 @@
 export const DB = {
+  accountCredentials: "hamster_account_credentials",
+  accountSessions: "hamster_account_sessions",
+  goalCompletions: "hamster_goal_completions",
+  goalPhotos: "hamster_goal_photos",
+  dailySolutionCounts: "hamster_daily_solution_counts",
   profiles: "hamster_profiles",
   studies: "hamster_studies",
   studyMembers: "hamster_study_members",
@@ -13,4 +18,20 @@ export const DB = {
   pushSubscriptions: "hamster_push_subscriptions",
   notificationPreferences: "hamster_notification_preferences",
   notificationDeliveries: "hamster_notification_deliveries",
+} as const;
+
+export const RPC = {
+  scheduleStudyRules: "hamster_schedule_study_rules",
+  recordGoal: "hamster_record_goal",
+  communityCatalog: "hamster_community_catalog",
+  createCommunityStudy: "hamster_create_community_study",
+  joinCommunityStudy: "hamster_join_community_study",
+  administerCommunityStudy: "hamster_administer_community_study",
+  renameAccount: "hamster_rename_account",
+  registerAccount: "hamster_register_account",
+  startAccountSession: "hamster_start_account_session",
+  resetAccountPassword: "hamster_reset_account_password",
+  consumeAccountAttempt: "hamster_consume_account_attempt",
+  recordGitHubSolutions: "hamster_record_github_solutions",
+  linkGitHubRepositories: "hamster_link_github_repositories",
 } as const;

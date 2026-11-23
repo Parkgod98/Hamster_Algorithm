@@ -1,0 +1,8 @@
+.account-panel { width: 100%; max-width: 28rem; }
+.account-panel form, form.account-panel, .account-panel label { display: grid; gap: .4rem; }
+.account-panel form, form.account-panel { gap: .85rem; }
+.account-panel label { font-size: .9rem; font-weight: 650; text-align: start; }
+.account-panel label input, .account-panel label select { width: 100%; border: 1px solid #d4c8b9; background: white; color: #352a23; border-radius: .75rem; padding: .7rem .85rem; font: inherit; }
+.account-links { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1rem; margin-block: .65rem; }
+.account-links button { font: inherit; font-size: .85rem; color: inherit; cursor: pointer; border: 0; padding: .3rem 0; text-decoration: underline; background: transparent; }
+.account-panel p:empty { display: none; }
