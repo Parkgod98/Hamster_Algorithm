@@ -1,13 +1,16 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { RECOVERY_QUESTIONS } from "@/lib/account";
 import { accountRequest } from "@/lib/account-browser";
 import { browserSupabase, currentAccountId, saveAccountSession } from "@/lib/supabase-browser";
 import { accountDestination } from "@/lib/study-navigation";
+import { knownEmptyDirectory, rememberEmptyDirectory } from "@/lib/directory-cache";
 
 type Mode = "login" | "register" | "recover" | "migrate";
 export function AuthPanel({ migration }: { migration?: { userId: string; nickname: string } }) {
+  const router = useRouter();
   const [mode,setMode] = useState<Mode>(migration ? "migrate" : "login");
   const [login,setLogin] = useState("");
   const [question,setQuestion] = useState("");
@@ -45,7 +48,8 @@ export function AuthPanel({ migration }: { migration?: { userId: string; nicknam
           if (activeUser && activeUser !== migration.userId) return;
         }
         saveAccountSession(result.token,result.userId);
-        window.location.replace(accountDestination(action === "register"));
+        if (action === "register") rememberEmptyDirectory(result.userId);
+        router.replace(accountDestination(action === "register", knownEmptyDirectory(result.userId)));
       }
     } catch (error) { setMessage(error instanceof Error ? error.message : "다시 시도해주세요."); }
     finally { setBusy(false); }

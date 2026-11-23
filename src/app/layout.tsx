@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { ClientEnhancements } from "@/components/client-enhancements";
 import { PwaRegister } from "@/components/pwa-register";
+import { ViewSync } from "@/components/view-sync";
 import "./globals.css";
 import "./enhancements.css";
 import "./push.css";
@@ -34,5 +35,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ko"><body><PwaRegister /><ClientEnhancements />{children}</body></html>;
+  return <html lang="ko"><body><PwaRegister /><ViewSync /><ClientEnhancements />{children}</body></html>;
 }

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { AccountRequestError, accountRequest } from "@/lib/account-browser";
+import { knownEmptyDirectory } from "@/lib/directory-cache";
 import { accountDestination, rememberAccountReturn } from "@/lib/study-navigation";
 import { browserSupabase, currentAccountId, forgetLegacySession, onStoredAccountChange } from "@/lib/supabase-browser";
 import { AppBrand } from "./app-brand";
@@ -12,6 +14,7 @@ type EntryState =
   | { kind: "migration"; userId: string; nickname: string };
 
 export function AccountGate({ children, landing = false }: { children: ReactNode; landing?: boolean }) {
+  const router = useRouter();
   const [entry, setEntry] = useState<EntryState>({ kind: "checking" });
   const [attempt, setAttempt] = useState(0);
 
@@ -30,14 +33,14 @@ export function AccountGate({ children, landing = false }: { children: ReactNode
     });
     function showGuest() {
       if (landing) setEntry({ kind: "ready" });
-      else window.location.replace("/");
+      else router.replace("/");
     }
 
     async function check() {
       const { data: { session } } = await browserSupabase().auth.getSession();
       if (!active) return;
       if (session?.access_token.startsWith("hs1_")) {
-        if (landing) window.location.replace(accountDestination());
+        if (landing) router.replace(accountDestination(false, knownEmptyDirectory(session.user.id)));
         else setEntry({ kind: "ready" });
         return;
       }
@@ -66,7 +69,7 @@ export function AccountGate({ children, landing = false }: { children: ReactNode
 
     void check().catch(() => { if (active) setEntry({ kind: "error" }); });
     return () => { active = false; unsubscribe(); };
-  }, [attempt, landing]);
+  }, [attempt, landing, router]);
 
   if (entry.kind === "ready") return children;
   return <main className="account-page"><AppBrand /><section>

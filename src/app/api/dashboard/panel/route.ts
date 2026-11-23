@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DB } from "@/lib/db";
 import { createAdminClient, requireUser } from "@/lib/supabase";
+import { dayGoals, dayRule } from "@/lib/day-goals";
 import { readAllRows } from "@/lib/read-all-rows";
 import { studyDayStartTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 import { normalizeRuleConfig, submissionCredit, goalPolicy } from "@/lib/rules";
@@ -23,15 +24,15 @@ export async function GET(request: Request) {
     const view = params.get("view");
     if (!studyId) return json({ error: "스터디를 선택해주세요." }, 400);
     const db = createAdminClient();
-    const member = await db.from(DB.studyMembers).select("user_id").eq("study_id", studyId).eq("user_id", user.id).maybeSingle();
+    const member = await db.from(DB.studyMembers).select("joined_at").eq("study_id", studyId).eq("user_id", user.id).maybeSingle();
     if (member.error) throw member.error;
     if (!member.data) return json({ error: "이 스터디의 멤버만 확인할 수 있어요." }, 403);
 
-    if (view === "settings") {
+    if (view === "settings" || view === "repositories" || view === "history") {
       const [repos, versions] = await Promise.all([
-        readAllRows<{id: string; full_name: string}>((from,to) => db.from(DB.repositoryConnections)
+        view === "history" ? [] : readAllRows<{id: string; full_name: string}>((from,to) => db.from(DB.repositoryConnections)
           .select("id,full_name").eq("user_id", user.id).eq("active", true).order("id").range(from,to)),
-        readAllRows<Version>((from,to) => db.from(DB.studyRuleVersions).select("effective_from,changed_by,created_at")
+        view === "repositories" ? [] : readAllRows<Version>((from,to) => db.from(DB.studyRuleVersions).select("effective_from,changed_by,created_at")
           .eq("study_id", studyId).order("effective_from", { ascending: false }).range(from,to)),
       ]);
       return json({ repositories: repos.map(r => ({id:r.id, fullName:r.full_name})), ruleHistory: versions });
@@ -51,23 +52,21 @@ export async function GET(request: Request) {
     const penalties = readAllRows<Penalty>((from,to) => db.from(DB.penalties).select("user_id,study_date,amount")
       .eq("study_id", studyId).gte("study_date",start).lte("study_date",end).order("study_date").order("user_id").range(from,to));
     if (!isDay) return json({ penalties: await penalties });
-    const [penaltyRows, rules, submissions] = await Promise.all([
-      penalties,
-      db.from(DB.studyRuleVersions).select("rule_config").eq("study_id", studyId).lte("effective_from", date)
-        .order("effective_from",{ascending:false}).limit(1).maybeSingle(),
-      readAllRows<Solve>((from,to) => db.from(DB.submissions).select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)")
+    const [penaltyRows, rule] = await Promise.all([penalties, dayRule(db, studyId, date)]);
+    const algorithm = Boolean(rule && goalPolicy(rule.rule_config).allowed.includes("algorithm"));
+    const [goals, submissions] = await Promise.all([
+      dayGoals(db, studyId, date, user.id, member.data.joined_at, rule, true),
+      algorithm ? readAllRows<Solve>((from,to) => db.from(DB.submissions).select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)")
         .eq("study_id", studyId).gte("solved_at",studyDayStartTimestamp(date)).lt("solved_at",studyDayEndExclusiveTimestamp(date))
-        .order("solved_at").order("id").range(from,to)),
+        .order("solved_at").order("id").range(from,to)) : [],
     ]);
-    if (rules.error) throw rules.error;
-    if (!rules.data) return json({ penalties: penaltyRows, submissions: [], algorithm: false });
-    const config = normalizeRuleConfig(rules.data.rule_config);
+    const config = normalizeRuleConfig(rule?.rule_config);
     const details = submissions.map(row => {
       const p = (Array.isArray(row.hamster_problems) ? row.hamster_problems[0] : row.hamster_problems) as Problem;
       return { userId: row.user_id, platform:p.platform, problemId:p.external_id, title:p.title, difficulty:p.difficulty,
         credit:submissionCredit(p.platform,p.difficulty,config), solvedAt:row.solved_at, source:row.source };
     });
-    return json({ penalties: penaltyRows, submissions: details, algorithm: goalPolicy(config).allowed.includes("algorithm") });
+    return json({ penalties: penaltyRows, submissions: details, algorithm, goals });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return json({ error: "로그인이 필요해요." }, 401);
     return json({ error: "상세 정보를 불러오지 못했어요." }, 503);

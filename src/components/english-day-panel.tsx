@@ -2,41 +2,49 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { GOAL_LABELS, type GoalPolicy, type ManualGoal, type StudyGoal } from "@/lib/study-goals";
+import { GOAL_LABELS, type ManualGoal, type StudyGoal } from "@/lib/study-goals";
+import type { DayGoals, DayGoalEntry } from "@/lib/day-goals";
+import { browserSupabase } from "@/lib/supabase-browser";
+import { invalidateViews, readView } from "@/lib/view-cache";
+import { useViewRevision } from "./use-view-revision";
 import "./study-goals.css";
 
-type Token = () => Promise<string | null | undefined>;
-type Entry = { id: string; mine: boolean; name: string; goal: ManualGoal; counted: boolean; hasPhoto: boolean };
-type Day = { policy: GoalPolicy | null; canSubmit: boolean; entries: Entry[] };
-type Props = { studyId: string; date: string; completedGoals?: StudyGoal[]; getAccessToken: Token; onChanged: () => void };
+type Props = {
+  viewerId: string; studyId: string; date: string; data: DayGoals; completedGoals?: StudyGoal[];
+  onChanged: (entry: DayGoalEntry | null) => void;
+};
 
-async function sessionHeaders(getAccessToken: Token) {
-  const token = await getAccessToken();
-  if (!token) throw new Error("로그인이 필요해요.");
-  return { Authorization: `Bearer ${token}` };
+async function sessionHeaders(viewerId: string) {
+  const { data } = await browserSupabase().auth.getSession();
+  if (data.session?.user.id !== viewerId) throw new Error("로그인이 필요해요.");
+  return { Authorization: `Bearer ${data.session.access_token}` };
 }
 
-function EntryPhoto({ studyId, entry, getAccessToken }: { studyId: string; entry: Entry; getAccessToken: Token }) {
+function EntryPhoto({ studyId, entry, viewerId }: { studyId: string; entry: DayGoalEntry; viewerId: string }) {
   const [show, setShow] = useState(false);
   const [url, setUrl] = useState("");
   const [error, setError] = useState(false);
+  const revision = useViewRevision(viewerId, `photo:${studyId}:${entry.id}`);
   useEffect(() => {
     if (!show) return;
-    const abort = new AbortController();
+    let active = true;
     let objectUrl = "";
+    const key = `photo:${studyId}:${entry.id}`;
     async function load() {
-      const response = await fetch(`/api/goals/photo?${new URLSearchParams({ studyId, id: entry.id })}`, {
-        headers: await sessionHeaders(getAccessToken), cache: "no-store", signal: abort.signal,
+      const blob = await readView(viewerId, key, async signal => {
+        const response = await fetch(`/api/goals/photo?${new URLSearchParams({ studyId, id: entry.id })}`, {
+          headers: await sessionHeaders(viewerId), cache: "no-store", signal,
+        });
+        if (!response.ok) throw new Error("사진을 열 수 없어요.");
+        return await response.blob();
       });
-      if (!response.ok) throw new Error();
-      const blob = await response.blob();
-      if (abort.signal.aborted) return;
+      if (!active) return;
       objectUrl = URL.createObjectURL(blob);
       setUrl(objectUrl);
     }
-    void load().catch(() => { if (!abort.signal.aborted) setError(true); });
-    return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [entry.id, studyId, getAccessToken, show]);
+    void load().catch(() => { if (active) setError(true); });
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [entry.id, viewerId, studyId, show, revision]);
   return <div>
     <button type="button" className="text-button" aria-expanded={show} onClick={() => {
       setShow(!show); setUrl(""); setError(false);
@@ -47,45 +55,29 @@ function EntryPhoto({ studyId, entry, getAccessToken }: { studyId: string; entry
   </div>;
 }
 
-function DayPanel({ studyId, date, completedGoals = [], getAccessToken, onChanged }: Props) {
-  const [data, setData] = useState<Day>();
+export function EnglishDayPanel({ viewerId, studyId, date, data, completedGoals = [], onChanged }: Props) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<ManualGoal | null>(null);
   const [photos, setPhotos] = useState<Partial<Record<ManualGoal, File>>>({});
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const abort = new AbortController();
-    async function load() {
-      const response = await fetch(`/api/goals?${new URLSearchParams({ studyId, date })}`, {
-        headers: await sessionHeaders(getAccessToken), cache: "no-store", signal: abort.signal,
-      });
-      if (!response.ok) throw new Error();
-      const result = await response.json() as Day;
-      if (!abort.signal.aborted) setData(result);
-    }
-    void load().catch(() => { if (!abort.signal.aborted) setMessage("날짜별 목표를 불러오지 못했어요."); });
-    return () => abort.abort();
-  }, [date, studyId, getAccessToken, revision]);
-
   async function complete(goal: ManualGoal) {
     setBusy(goal); setMessage("");
     try {
       const form = new FormData();
       form.set("date", date); form.set("studyId", studyId); form.set("goal", goal);
       if (photos[goal]) form.set("photo", photos[goal]);
-      const response = await fetch("/api/goals", { method: "POST", headers: await sessionHeaders(getAccessToken), body: form });
-      const result = await response.json() as { error?: string; id?: string };
+      const response = await fetch("/api/goals", { method: "POST", headers: await sessionHeaders(viewerId), body: form });
+      const result = await response.json() as { error?: string; id?: string; hasPhoto?: boolean };
       if (!response.ok || !result.id) throw new Error(result.error ?? "인증을 저장할 수 없어요.");
-      const entry: Entry = { id: result.id, name: "나", mine: true, goal, counted: true, hasPhoto: Boolean(photos[goal]) };
-      setData((previous) => previous ? { ...previous, entries: [...previous.entries.filter((item) => item.id !== entry.id), entry] } : previous);
+      const entry = typeof result.hasPhoto === "boolean"
+        ? { id: result.id, name: "나", mine: true, goal, counted: true, hasPhoto: result.hasPhoto }
+        : null;
+      invalidateViews(viewerId, [`photo:${studyId}:${result.id}`]);
       setMessage(`${GOAL_LABELS[goal]} 인증을 저장했어요.`);
-      setRevision((value) => value + 1);
-      onChanged();
+      onChanged(entry);
     } catch (error) { setMessage(error instanceof Error ? error.message : "인증을 저장할 수 없어요."); }
     finally { setBusy(null); }
   }
 
-  if (!data) return <p role="status">{message || "날짜별 목표를 불러오는 중…"}</p>;
   if (!data.policy) return null;
   const policy = data.policy;
   const manualGoals = policy.allowed.filter((goal): goal is ManualGoal => goal !== "algorithm");
@@ -117,12 +109,8 @@ function DayPanel({ studyId, date, completedGoals = [], getAccessToken, onChange
     })}
     {data.entries.length > 0 && <ul className="goal-records">{data.entries.map((entry) => <li key={entry.id}>
       <span>{entry.name} · {GOAL_LABELS[entry.goal]} {entry.counted ? "완료" : "규칙 변경으로 다시 인증 필요"}</span>
-      {entry.hasPhoto && <EntryPhoto studyId={studyId} entry={entry} getAccessToken={getAccessToken} />}
+      {entry.hasPhoto && <EntryPhoto studyId={studyId} entry={entry} viewerId={viewerId} />}
     </li>)}</ul>}
     {message && <p role="status">{message}</p>}
   </section>;
-}
-
-export function EnglishDayPanel(props: Props) {
-  return <DayPanel {...props} key={props.studyId + props.date} />;
 }

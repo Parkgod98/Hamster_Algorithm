@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { backfillGitHubRepository, startGitHubConnection } from "@/lib/github-connect-browser";
 import { browserSupabase } from "@/lib/supabase-browser";
+import { invalidateViews } from "@/lib/view-cache";
 import { NicknameSettings } from "./account-settings";
 import { StudyAdministration } from "./study-administration";
 import { StudyRuleEditor, type SettingsStudy } from "./study-rule-editor";
@@ -17,14 +18,13 @@ type Tab = "rules" | "members" | "account";
 type Props = {
   study: SettingsStudy;
   members: Array<{userId: string; name: string}>;
-  revision: number;
+  viewerId: string;
   githubAppSlug: string;
   onClose: () => void;
-  onChanged: () => Promise<void>;
   onLogout: () => Promise<void>;
 };
 
-export function StudySettingsSheet({ study, members, revision, githubAppSlug, onClose, onChanged, onLogout }: Props) {
+export function StudySettingsSheet({ study, members, viewerId, githubAppSlug, onClose, onLogout }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const headingId = useId();
@@ -33,8 +33,11 @@ export function StudySettingsSheet({ study, members, revision, githubAppSlug, on
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
-  const needSettings = tab === "account" || (tab === "rules" && historyOpen);
-  const settings = useStudyPanel<SettingsPanel>(needSettings ? "/api/dashboard/panel?view=settings&studyId=" + encodeURIComponent(study.id) : null, revision);
+  const panel = "/api/dashboard/panel?studyId=" + encodeURIComponent(study.id);
+  const history = useStudyPanel<Pick<SettingsPanel, "ruleHistory">>(viewerId, `history:${study.id}`,
+    tab === "rules" && historyOpen ? panel + "&view=history" : null);
+  const repositories = useStudyPanel<Pick<SettingsPanel, "repositories">>(viewerId, "repos",
+    tab === "account" ? panel + "&view=repositories" : null);
 
   useEffect(() => {
     const sheet = dialog.current;
@@ -51,7 +54,7 @@ export function StudySettingsSheet({ study, members, revision, githubAppSlug, on
       if (!data.session) throw new Error("로그인이 필요해요.");
       const count = await backfillGitHubRepository(id, data.session.access_token);
       setMessage(count + "개 풀이를 가져왔어요.");
-      await onChanged();
+      invalidateViews(viewerId, ["calendar:", "day:", "growth:"]);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "과거 기록을 가져오지 못했어요.");
     } finally { setBusy(""); }
@@ -92,27 +95,29 @@ export function StudySettingsSheet({ study, members, revision, githubAppSlug, on
     </div>
     <div ref={content} className={s.scrollArea} key={study.id}>
       <div hidden={tab !== "rules"}>
-        <StudyRuleEditor study={study} onChanged={onChanged} />
+        <StudyRuleEditor study={study} onChanged={async () => {
+          invalidateViews(viewerId, [`history:${study.id}`, `calendar:${study.id}:`, "directory:", "invite:"]);
+        }} />
         <details className={s.history} onToggle={event => setHistoryOpen(event.currentTarget.open)}>
           <summary>규칙 변경 이력</summary>
           {historyOpen && <div className={s.disclosureBody}>
-            {settings?.data?.ruleHistory.length ? settings.data.ruleHistory.map((item, index) =>
+            {history?.data?.ruleHistory.length ? history.data.ruleHistory.map((item, index) =>
               <div className={s.ruleRow} key={item.effective_from + "-" + index}>
                 <strong>{item.effective_from}</strong><span>{members.find(m => m.userId === item.changed_by)?.name || "초기 설정"}</span>
-              </div>) : <p className={s.caption}>{settings?.error || (settings?.data ? "변경 이력이 없어요." : "이력을 불러오는 중…")}</p>}
+              </div>) : <p className={s.caption}>{history?.error || (history?.data ? "변경 이력이 없어요." : "이력을 불러오는 중…")}</p>}
           </div>}
         </details>
       </div>
-      {visited.includes("members") && study.role === "admin" && <div hidden={tab !== "members"}><StudyAdministration studyId={study.id} /></div>}
+      {visited.includes("members") && study.role === "admin" && <div hidden={tab !== "members"}><StudyAdministration viewerId={viewerId} studyId={study.id} visible={tab === "members"} /></div>}
       {visited.includes("account") && <div hidden={tab !== "account"}><div className={s.accountGroups}>
-        <div className={s.accountGroup}><NicknameSettings onSaved={() => void onChanged()} /></div>
+        <div className={s.accountGroup}><NicknameSettings visible={tab === "account"} /></div>
         <section className={s.accountGroup} aria-label="GitHub 저장소">
           <header className={s.ruleHeading}><div><h3>GitHub 저장소</h3><p>연결한 저장소에서 알고리즘 풀이를 가져와요.</p></div></header>
-          {settings?.data?.repositories.length ? <ul className={s.repositories}>
-            {settings.data.repositories.map(repo => <li key={repo.id}><strong>{repo.fullName}</strong>
+          {repositories?.data?.repositories.length ? <ul className={s.repositories}>
+            {repositories.data.repositories.map(repo => <li key={repo.id}><strong>{repo.fullName}</strong>
               <button type="button" className={s.quietButton} disabled={!!busy} onClick={() => void backfill(repo.id)}>
                 {busy === repo.id ? "가져오는 중…" : "과거 기록 가져오기"}
-              </button></li>)}</ul> : <p className={s.caption}>{settings?.error || (settings?.data ? "연결된 저장소가 없어요." : "저장소를 확인하는 중…")}</p>}
+              </button></li>)}</ul> : <p className={s.caption}>{repositories?.error || (repositories?.data ? "연결된 저장소가 없어요." : "저장소를 확인하는 중…")}</p>}
           <button type="button" className={s.quietButton} onClick={connect}>저장소 연결</button>
         </section>
         <button type="button" className={s.logout} disabled={!!busy} onClick={() => void logout()}>{busy === "logout" ? "로그아웃 중…" : "로그아웃"}</button>

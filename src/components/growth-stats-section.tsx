@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { browserSupabase } from "@/lib/supabase-browser";
+import { useMemo } from "react";
+import { useStudyPanel } from "./use-study-panel";
 import type { GrowthReport, PlatformGrowth } from "@/lib/growth-stats";
 import type { Platform } from "@/lib/types";
 
@@ -17,26 +17,6 @@ const UPPER_LABEL: Partial<Record<Platform, string>> = {
   PROGRAMMERS: "Lv.2 이상",
   SWEA: "D4 이상",
 };
-
-const GROWTH_CACHE_TTL_MS = 5 * 60 * 1000;
-type GrowthCacheEntry = { report: GrowthReport; fetchedAt: number };
-const growthReportCache = new Map<string, GrowthCacheEntry>();
-
-function growthCacheKey(userId: string, studyId: string, month: string) {
-  return `${userId}:${studyId}:${month}`;
-}
-
-export function invalidateGrowthStatsCache(userId: string, studyId: string) {
-  const prefix = `${userId}:${studyId}:`;
-  for (const key of growthReportCache.keys()) {
-    if (key.startsWith(prefix)) growthReportCache.delete(key);
-  }
-}
-
-async function accessToken() {
-  const { data } = await browserSupabase().auth.getSession();
-  return data.session?.access_token;
-}
 
 function formatMonth(month: string) {
   const [, value] = month.split("-");
@@ -78,54 +58,12 @@ export function GrowthStatsSection({
   members: GrowthMember[];
   onSelectUser: (userId: string) => void;
 }) {
-  const [report, setReport] = useState<GrowthReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      const key = growthCacheKey(selectedUserId, studyId, month);
-      const cached = growthReportCache.get(key);
-      const fresh = cached && Date.now() - cached.fetchedAt < GROWTH_CACHE_TTL_MS;
-
-      if (cached) {
-        setReport(cached.report);
-        setLoading(false);
-        setError("");
-      } else {
-        setReport(null);
-        setLoading(true);
-        setError("");
-      }
-      if (fresh || cancelled) return;
-
-      void (async () => {
-        const access = await accessToken();
-        if (!access || cancelled) return;
-        const params = new URLSearchParams({ month, userId: selectedUserId, studyId });
-        const response = await fetch(`/api/growth-stats?${params.toString()}`, {
-          headers: { Authorization: `Bearer ${access}` },
-        });
-        const payload = await response.json() as { report?: GrowthReport; error?: string };
-        if (cancelled) return;
-        if (!response.ok || !payload.report) {
-          if (!cached) setError(payload.error ?? "풀이 성장 통계를 불러오지 못했습니다.");
-          setLoading(false);
-          return;
-        }
-        growthReportCache.set(key, { report: payload.report, fetchedAt: Date.now() });
-        setReport(payload.report);
-        setError("");
-        setLoading(false);
-      })();
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [month, selectedUserId, studyId]);
+  const key = `growth:${studyId}:${selectedUserId}:${month}`;
+  const url = "/api/growth-stats?" + new URLSearchParams({ month, userId: selectedUserId, studyId });
+  const result = useStudyPanel<{report: GrowthReport}>(currentUserId, key, url);
+  const report = result?.data?.report;
+  const error = result?.error;
+  const loading = !report && !error;
 
   const maxPlatformCount = useMemo(() => Math.max(1, ...(report?.platformCounts.map((item) => item.count) ?? [1])), [report]);
   const maxDailyCount = useMemo(() => Math.max(1, ...(report?.daily.map((item) => item.total) ?? [1])), [report]);

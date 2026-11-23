@@ -1,47 +1,64 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { communityMessage, communityRequest } from "@/lib/community-client";
 import type { CommunityManagement, CommunityOptions } from "@/lib/community";
 import { CommunityFields } from "./community-fields";
+import { useStudyPanel } from "./use-study-panel";
+import { invalidateViews, peekView, putView } from "@/lib/view-cache";
 import styles from "./study-community.module.css";
 import sheet from "./study-settings.module.css";
 
-export function StudyAdministration({ studyId }: { studyId: string }) {
-  const [state, setState] = useState<CommunityManagement>();
-  const [options, setOptions] = useState<CommunityOptions>();
+export function StudyAdministration({ viewerId, studyId, visible }: { viewerId: string; studyId: string; visible: boolean }) {
+  const key = `manage:${studyId}`;
+  const panel = useStudyPanel<CommunityManagement>(viewerId, key,
+    visible ? `/api/studies/manage?studyId=${encodeURIComponent(studyId)}` : null);
+  const state = panel?.data;
+  const [draft, setOptions] = useState<CommunityOptions>();
+  const options = draft ?? state;
   const [invite, setInvite] = useState("");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    communityRequest<CommunityManagement>(`/api/studies/manage?studyId=${encodeURIComponent(studyId)}`, undefined, controller.signal)
-      .then((data) => {
-        if (controller.signal.aborted) return;
-        setState(data);
-        setOptions((current) => current ?? { description: data.description, joinPolicy: data.joinPolicy, discoverable: data.discoverable });
-      }).catch((cause) => { if (!controller.signal.aborted) setMessage(communityMessage(cause)); });
-    return () => controller.abort();
-  }, [studyId, revision]);
   async function action(name: string, targetId?: string) {
     setBusy(name); setMessage("");
     try {
-      const response = await communityRequest<{ code?: string }>("/api/studies/manage", {
-        studyId, action: name, targetId, ...(name === "configure" ? options : {}),
-      });
+      const response = await communityRequest<{ code?: string; member?: CommunityManagement["members"][number] | null; refresh?: boolean }>("/api/studies/manage", {
+        studyId, action: name, targetId, ...(name === "configure" && options ? {
+          description: options.description, joinPolicy: options.joinPolicy, discoverable: options.discoverable
+        } : {}),
+      }, undefined, viewerId);
       if (name === "invite" && response.code) {
         setInvite(new URL(`/join/${response.code}`, window.location.origin).href);
       } else {
+        const previous = peekView<CommunityManagement>(viewerId, key);
+        const affected = [key, "directory:", "invite:"];
+        if (name === "approve" || name === "promote") affected.push(`calendar:${studyId}:`);
+        invalidateViews(viewerId, affected);
+        const hasMemberResult = !["approve", "promote"].includes(name) || "member" in response;
+        if (previous && hasMemberResult && !response.refresh) {
+          let next = previous;
+          if (name === "configure" && options) {
+            next = { ...previous, description: options.description.trim(), joinPolicy: options.joinPolicy, discoverable: options.discoverable };
+          } else if (name === "approve" || name === "reject") {
+            next = { ...previous, requests: previous.requests.filter(person => person.id !== targetId) };
+          }
+          if (response.member) {
+            const person = response.member;
+            const exists = next.members.some(member => member.id === person.id);
+            next = { ...next, members: exists ? next.members.map(member => member.id === person.id ? person : member) : [...next.members, person] };
+          }
+          putView(viewerId, key, next);
+        }
+        if (name === "configure") setOptions(undefined);
         setMessage(name === "configure" ? "가입 설정을 저장했어요." : "멤버 정보를 반영했어요.");
-        setRevision((r) => r + 1);
       }
     } catch (cause) { setMessage(communityMessage(cause)); }
     finally { setBusy(""); }
   }
   return <section className={sheet.management} aria-label="가입과 멤버 관리">
-    {!state && !message && <p>멤버 정보를 불러오는 중…</p>}
-    {!state && message && <button className="secondary-button" onClick={() => setRevision((r) => r + 1)}>다시 조회</button>}
+    {!state && !panel?.error && <p>멤버 정보를 불러오는 중…</p>}
+    {!state && panel?.error && <><p role="alert">{panel.error}</p><button className="secondary-button"
+      onClick={() => invalidateViews(viewerId, [key])}>다시 조회</button></>}
     {state && options && <>
       <form className={sheet.managementForm} onSubmit={(e) => { e.preventDefault(); void action("configure"); }}>
         <CommunityFields value={options} onChange={setOptions} />

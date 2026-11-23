@@ -8,18 +8,11 @@ import { normalizeRuleVersions, rulesForDate, type RuleVersionRow } from "@/lib/
 import { getPostponementStatus, type PostponementStatus } from "@/lib/postponement-status";
 import { readAllRows } from "@/lib/read-all-rows";
 import { readGoalCompletions, evaluateStudyTimeline, groupDailyCredits, type DailySolutions } from "@/lib/server-progress";
-import type { StudyGoal } from "@/lib/rules";
+import { summarizeCalendar, type DayMember } from "@/lib/calendar-snapshot";
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 type MemberRow = { user_id: string; display_name: string; joined_at: string };
 type PostponementRow = { user_id: string; study_date: string; requested_at: string };
-type DayMember = {
-  userId: string; name: string;
-  state: "inactive" | "upcoming" | "presolved" | "complete" | "in-progress" | "postponed" | "missed";
-  completedGoals: StudyGoal[]; credits: number; directCredits: number; postponedAt: string | null;
-  resolvedOn: string | null;
-
-};
 
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -49,7 +42,8 @@ export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
     const admin = createAdminClient();
-    const requestedStudy = new URL(request.url).searchParams.get("studyId");
+    const params = new URL(request.url).searchParams;
+    const requestedStudy = params.get("studyId");
     let memberships = admin.from(DB.studyMembers).select("study_id,role").eq("user_id", user.id);
     if (requestedStudy) memberships = memberships.eq("study_id", requestedStudy);
     const membershipResult = await memberships.order("joined_at").order("study_id").limit(1).maybeSingle();
@@ -57,7 +51,16 @@ export async function GET(request: Request) {
     const membership = membershipResult.data;
     const current = studyDateFromTimestamp(new Date().toISOString());
     const month = requestedMonth(request.url, current);
-    const bounds = monthBounds(month);
+    const memberId = params.get("member");
+    let months = [month];
+    if (memberId !== null) {
+      if (!memberId || !requestedStudy) return json({ error: "스터디와 멤버를 선택해주세요." }, 400);
+      months = [...new Set((params.get("months") ?? "").split(","))].sort();
+      if (!months.length || months.length > 12 || months.some(value => !/^\d{4}-(0[1-9]|1[0-2])$/.test(value))) {
+        return json({ error: "확인할 달을 선택해주세요." }, 400);
+      }
+    }
+    const bounds = months.map(monthBounds);
     if (requestedStudy && !membership) return json({ error: "forbidden" }, 403);
     if (!membership) return json({ study: null, members: [], repositories: [], days: [],
       summary: { complete: 0, postponed: 0, missed: 0, inProgress: 0 }, statistics: [], ruleHistory: [],
@@ -69,27 +72,34 @@ export async function GET(request: Request) {
         .select("effective_from,rule_config,postpone_deadline_hour,postpone_deadline_minute,max_consecutive_postpone,max_presolve_days")
         .eq("study_id", membership.study_id).lte("effective_from", addStudyDays(current, 1))
         .order("effective_from", { ascending: true }).range(from, to)),
-      readAllRows<MemberRow>((from, to) => admin.from(DB.studyMembers).select("user_id,display_name,joined_at")
-        .eq("study_id", membership.study_id).order("joined_at", { ascending: true }).order("user_id", { ascending: true }).range(from, to)),
+      readAllRows<MemberRow>((from, to) => {
+        let query = admin.from(DB.studyMembers).select("user_id,display_name,joined_at").eq("study_id", membership.study_id);
+        if (memberId) query = query.eq("user_id", memberId);
+        return query.order("joined_at", { ascending: true }).order("user_id", { ascending: true }).range(from, to);
+      }),
     ]);
+    if (memberId && memberRows.length === 0) return json({ error: "멤버를 찾을 수 없어요." }, 404);
     if (studyResult.error) throw studyResult.error;
     const study = studyResult.data;
     if (!study) return json({ error: "study not found" }, 404);
     const versions = normalizeRuleVersions(rawVersions, normalizeRuleConfig);
     const currentRules = rulesForDate(versions, current);
     const scheduledRules = versions.find((version) => version.effectiveFrom > current);
-    const monthDates = dateRange(bounds.start, bounds.end);
+    const monthDates = bounds.flatMap(({start, end}) => dateRange(start, end));
     const maxCarry = Math.max(...versions.map((version) => version.maxPresolveDays), 0);
     const futureEnd = addStudyDays(current, maxCarry);
     // Later repayments must update old-month icons. Never truncate the FIFO input to the visible month.
-    const evaluationEnd = bounds.end < current ? current : bounds.end < futureEnd ? bounds.end : futureEnd;
+    const lastDay = bounds[bounds.length - 1].end;
+    const evaluationEnd = lastDay < current ? current : lastDay < futureEnd ? lastDay : futureEnd;
     const memberIds = memberRows.map((member) => member.user_id);
     const earliestJoined = memberRows.map((member) => studyDateFromTimestamp(member.joined_at)).sort()[0];
     const [creditRows, goalRows, postponementRows] = await Promise.all([
-      earliestJoined && earliestJoined <= current ? readAllRows<DailySolutions>((from, to) => admin.from(DB.dailySolutionCounts)
-        .select("user_id,study_date,platform,difficulty,solves,solved_through").eq("study_id", study.id)
-        .gte("study_date", earliestJoined).lte("study_date", current)
-        .order("study_date").order("user_id").order("platform").order("difficulty").order("solved_through").range(from, to)) : [],
+      earliestJoined && earliestJoined <= current ? readAllRows<DailySolutions>((from, to) => {
+        let query = admin.from(DB.dailySolutionCounts).select("user_id,study_date,platform,difficulty,solves,solved_through")
+          .eq("study_id", study.id).gte("study_date", earliestJoined).lte("study_date", current);
+        if (memberId) query = query.eq("user_id", memberId);
+        return query.order("study_date").order("user_id").order("platform").order("difficulty").order("solved_through").range(from, to);
+      }) : [],
       readGoalCompletions(admin, study.id, evaluationEnd, memberIds),
       earliestJoined && earliestJoined <= current ? readAllRows<PostponementRow>((from, to) => admin.from(DB.postponements)
         .select("user_id,study_date,requested_at").eq("study_id", membership.study_id).in("user_id", memberIds)
@@ -137,13 +147,8 @@ export async function GET(request: Request) {
         });
       }
     }
-    const summary = { complete: 0, postponed: 0, missed: 0, inProgress: 0 };
-    for (const day of days) for (const member of day.members) {
-      if (member.state === "complete" || member.state === "presolved") summary.complete += 1;
-      else if (member.state === "postponed") summary.postponed += 1;
-      else if (member.state === "missed") summary.missed += 1;
-      else if (member.state === "in-progress") summary.inProgress += 1;
-    }
+    if (memberId) return json({ viewerId: user.id, studyId: study.id, memberId, studyDate: current, days, todayPostponement });
+    const summary = summarizeCalendar(days);
     return json({
       study: { id: study.id, name: study.name, role: membership.role, rules: currentRules.ruleConfig,
         postponeDeadlineHour: currentRules.postponeDeadlineHour, postponeDeadlineMinute: currentRules.postponeDeadlineMinute,

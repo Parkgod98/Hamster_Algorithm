@@ -63,6 +63,46 @@ for (const cap of [1000, 100]) {
   });
 }
 
+test("캐시된 두 월의 회원 패치는 전체 달력과 같고 다른 멤버의 이력을 읽지 않는다", async () => {
+  const env = runtime({ joined: "2026-09-29" });
+  env.setNow("2026-10-02T22:00:00+09:00");
+  env.rows[env.table.members].push({ ...env.rows[env.table.members][0], user_id: "bob", display_name: "다른 멤버" });
+  env.postpone("2026-09-30");
+  env.solve("2026-10-02");
+  env.solve("2026-10-01", "Gold V", "bob");
+  const previous = await calendar(env, "2026-09");
+  const current = await calendar(env, "2026-10");
+  env.queries.length = 0;
+  const result = await env.request("GET", undefined, {
+    url: "/api/dashboard?studyId=study&member=alice&months=2026-10,2026-09", route: "src/app/api/dashboard/route.ts",
+  });
+  assert.equal(result.httpStatus, 200);
+  assert.deepEqual(result.body.days, [...previous.body.days, ...current.body.days].map(day => ({
+    date: day.date, members: day.members.filter(row => row.userId === "alice"),
+  })));
+  assert.deepEqual(result.body.todayPostponement, current.body.todayPostponement);
+  assert.ok(env.queries.some(q => q.table === env.table.counts && condition(q, "eq", "user_id") === "alice"));
+  const denied = await env.request("GET", undefined, {
+    url: "/api/dashboard?studyId=study&member=outsider&months=2026-10", route: "src/app/api/dashboard/route.ts",
+  });
+  assert.equal(denied.httpStatus, 404);
+});
+
+test("날짜 상세는 당일에 허용된 목표만 한 번에 읽는다", async () => {
+  const env = runtime({ joined: "2026-10-01" });
+  const algorithm = await dayPanel(env, "2026-10-01");
+  assert.equal(algorithm.body.algorithm, true);
+  assert.equal(env.queries.some(q => q.table === env.table.goals), false);
+  env.queries.length = 0;
+  env.rows[env.table.versions][0].rule_config = { goals: { allowed: ["english"], mode: "all", required: 1, englishRule: "독해" } };
+  const english = await dayPanel(env, "2026-10-01");
+  assert.equal(english.body.goals.policy.englishRule, "독해");
+  assert.equal(english.body.goals.canSubmit, true);
+  assert.equal(english.body.algorithm, false);
+  assert.equal(env.queries.some(q => q.table === env.table.submissions), false);
+  assert.equal(env.queries.filter(q => q.table === env.table.versions).length, 1);
+});
+
 test("첫 표시는 일별 집계만 조회하고 상세 풀이는 선택한 하루만 조회한다", async () => {
   const env = runtime({ joined: "2026-09-30" });
   env.setNow("2026-10-02T22:00:00+09:00");

@@ -57,7 +57,13 @@ Free plan의 별도 project를 추가하지 않고 MyScheduler의 기존 Supabas
 - `hamster_repository_connections`: 사용자별 연결 Repository. 한 사용자가 여러 Repository를 연결할 수 있습니다.
 - `hamster_github_installations`: GitHub App 설치와 사용자 연결.
 
+## 조회 캐시와 변경 알림
+
+브라우저 모듈 메모리에 계정·스터디·조회 조건별 응답과 진행 중인 요청을 보관합니다. 조회 결과를 localStorage, IndexedDB, Service Worker에 저장하지 않습니다. Service Worker가 직접 보관하는 파일은 정해진 앱 아이콘 4개입니다.
+
+풀이·인증·미루기와 설정 등을 변경하는 트랜잭션이 스터디 또는 계정별 변경 이력을 최대 32건 유지합니다. 서버는 비공개 Realtime 채널에서 커밋 알림을 받고, 유효한 햄쮸터 세션의 현재 멤버십에 따라 `/api/sync/changes`로 변경 범위를 전송합니다. 재연결할 때 리비전이 같으면 기존 결과를 사용합니다. 놓친 이력이 보관 범위를 넘으면 해당 범위를 다시 조회합니다. 회원별 달력 갱신도 기존 FIFO 계산을 사용합니다.
 ## Submission model
+
 모든 입력 Source를 내부 `Submission`으로 정규화합니다.
 
 ```text

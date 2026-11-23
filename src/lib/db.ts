@@ -34,4 +34,5 @@ export const RPC = {
   consumeAccountAttempt: "hamster_consume_account_attempt",
   recordGitHubSolutions: "hamster_record_github_solutions",
   linkGitHubRepositories: "hamster_link_github_repositories",
+  syncSnapshot: "hamster_sync_snapshot",
 } as const;

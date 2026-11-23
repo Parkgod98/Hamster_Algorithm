@@ -1,5 +1,6 @@
 "use client";
 import { createClient } from "@supabase/supabase-js";
+import { clearViewer } from "./view-cache";
 
 const accountKey = "hamster-account-session";
 let legacy: ReturnType<typeof newOAuthClient> | undefined;
@@ -22,6 +23,7 @@ function oauthClient(linking = false) {
 export function githubProofClient() { return oauthClient(true); }
 
 export type AppSession = { user: { id: string }; access_token: string };
+export function currentAccountSession() { return localSession(); }
 function localSession(): AppSession | null {
   const raw = localStorage.getItem(accountKey);
   if (!raw) return null;
@@ -33,8 +35,11 @@ function localSession(): AppSession | null {
 }
 
 export function saveAccountSession(token: string, userId: string) {
+  const previous = localSession();
+  if (previous && previous.access_token !== token) clearViewer(previous.user.id);
   localStorage.setItem(accountKey, JSON.stringify({ token, userId }));
-  // The sign-in form navigates this tab immediately. Other tabs receive the storage event.
+  // The gate leaves navigation to the sign-in form; only the live connection subscribes here.
+  window.dispatchEvent(new Event('hamster-session-start'));
 }
 export function currentAccountId() {
   return localSession()?.user.id;
@@ -52,8 +57,10 @@ export async function forgetLegacySession(expectedToken: string) {
 }
 
 export function forgetAccountSession(expectedToken: string) {
-  if (localSession()?.access_token !== expectedToken) return false;
+  const session = localSession();
+  if (!session || session.access_token !== expectedToken) return false;
   localStorage.removeItem(accountKey);
+  clearViewer(session.user.id);
   window.dispatchEvent(new Event(accountKey));
   return true;
 }

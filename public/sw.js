@@ -1,4 +1,4 @@
-const CACHE = "hamster-static-v2";
+const CACHE = "hamster-static-v3";
 const STATIC_ASSETS = [
   "/icon.svg",
   "/icon-192.png",
@@ -14,7 +14,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     Promise.all([
-      caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
+      caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("hamster-static-") && key !== CACHE).map((key) => caches.delete(key)))),
       self.clients.claim(),
     ]),
   );
@@ -64,15 +64,9 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(request)),
-  );
+  // Only the four public app icons belong on disk. Page fragments and study
+  // views must never enter Cache Storage, including Next.js client navigation.
+  if (!url.search && STATIC_ASSETS.includes(url.pathname)) {
+    event.respondWith(caches.open(CACHE).then(async cache => (await cache.match(request)) || fetch(request)));
+  }
 });

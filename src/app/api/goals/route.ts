@@ -1,15 +1,9 @@
 import { NextResponse } from "next/server";
 import { DB, RPC } from "@/lib/db";
-import { readAllRows } from "@/lib/read-all-rows";
-import { goalPolicy, type ManualGoal } from "@/lib/rules";
-import { addStudyDays, studyDateFromTimestamp } from "@/lib/study-day";
+import { dayGoals, dayRule } from "@/lib/day-goals";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 
 const maxBytes = 2 * 1024 * 1024;
-type Entry = {
-  id: string; user_id: string; goal: ManualGoal; photo_type: string | null; created_at: string;
-  hamster_study_members: { display_name: string } | { display_name: string }[] | null;
-};
 
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -37,28 +31,8 @@ export async function GET(request: Request) {
       .eq("study_id", studyId).eq("user_id", viewer.id).maybeSingle();
     if (member.error) throw member.error;
     if (!member.data) return json({ error: "스터디 멤버만 볼 수 있습니다." }, 403);
-    const [rule, entries] = await Promise.all([
-      admin.from(DB.studyRuleVersions).select("rule_config,max_presolve_days")
-        .eq("study_id", studyId).lte("effective_from", date).order("effective_from", { ascending: false }).limit(1).maybeSingle(),
-      readAllRows<Entry>((from, to) => admin.from(DB.goalCompletions)
-        .select("id,user_id,goal,photo_type,created_at,hamster_study_members(display_name)")
-        .eq("study_id", studyId).eq("study_date", date).order("created_at").order("id").range(from, to)),
-    ]);
-    if (rule.error) throw rule.error;
-    if (!rule.data) return json({ policy: null, canSubmit: false, entries: [] });
-    const policy = goalPolicy(rule.data.rule_config);
-    const horizon = rule.data.max_presolve_days;
-    const today = studyDateFromTimestamp(new Date().toISOString());
-    return json({
-      policy,
-      canSubmit: date >= studyDateFromTimestamp(member.data.joined_at) && date <= addStudyDays(today, horizon),
-      entries: entries.map((item) => {
-        const owner = Array.isArray(item.hamster_study_members) ? item.hamster_study_members[0] : item.hamster_study_members;
-        return { id: item.id, mine: item.user_id === viewer.id, name: owner?.display_name ?? "스터디원", goal: item.goal,
-          counted: policy.allowed.includes(item.goal) && date <= addStudyDays(studyDateFromTimestamp(item.created_at), horizon),
-          hasPhoto: Boolean(item.photo_type) };
-      }),
-    });
+    const rule = await dayRule(admin, studyId, date);
+    return json(await dayGoals(admin, studyId, date, viewer.id, member.data.joined_at, rule));
   } catch (error) { return failed(error); }
 }
 
@@ -89,7 +63,8 @@ export async function POST(request: Request) {
       type = imageType(bytes);
       if (!type) return json({ error: "PNG, JPG 또는 WebP 사진을 선택해 주세요." }, 400);
     }
-    const { data, error } = await createAdminClient().rpc(RPC.recordGoal, { p_study: studyId, p_user: viewer.id,
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc(RPC.recordGoal, { p_study: studyId, p_user: viewer.id,
       p_day: date, p_goal: goal, p_type: type, p_photo: bytes?.toString("base64") ?? null });
     if (error?.code === "42501") return json({ error: "스터디 멤버만 인증할 수 있어요." }, 403);
     if (error?.code === "22023") {
@@ -99,6 +74,14 @@ export async function POST(request: Request) {
       return json({ error: reasons[error.message] ?? "인증 내용을 확인해 주세요." }, 409);
     }
     if (error) throw error;
-    return json({ ok: true, id: data });
+    // The RPC is idempotent and may have returned an existing certification with a different attachment.
+    // A metadata read failure leaves the confirmed write intact; the client can refresh that day.
+    let hasPhoto: boolean | undefined;
+    try {
+      const saved = await admin.from(DB.goalCompletions).select("photo_type")
+        .eq("study_id", studyId).eq("user_id", viewer.id).eq("id", data).maybeSingle();
+      if (saved.data) hasPhoto = Boolean(saved.data.photo_type);
+    } catch { /* The browser will reconcile this single day's attachment metadata. */ }
+    return json({ ok: true, id: data, hasPhoto });
   } catch (error) { return failed(error); }
 }
