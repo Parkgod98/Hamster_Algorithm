@@ -36,14 +36,25 @@ export function saveAccountSession(token: string, userId: string) {
   localStorage.setItem(accountKey, JSON.stringify({ token, userId }));
   window.dispatchEvent(new Event(accountKey));
 }
-export function forgetAccountSession() {
+export function currentAccountId() {
+  return localSession()?.user.id;
+}
+
+export function forgetAccountSession(expectedToken: string) {
+  if (localSession()?.access_token !== expectedToken) return false;
   localStorage.removeItem(accountKey);
   window.dispatchEvent(new Event(accountKey));
+  return true;
 }
-export function accountDestination() {
-  const path = localStorage.getItem("hamster-next") || "/dashboard";
-  localStorage.removeItem("hamster-next");
-  return /^\/(?:dashboard|studies|join\/[\w-]+)(?:\?[^#]*)?$/.test(path) ? path : "/dashboard";
+
+export function onStoredAccountChange(callback: () => void) {
+  const onStorage = (event: StorageEvent) => { if (event.key === accountKey || event.key === null) callback(); };
+  window.addEventListener(accountKey, callback);
+  window.addEventListener("storage", onStorage);
+  return () => {
+    window.removeEventListener(accountKey, callback);
+    window.removeEventListener("storage", onStorage);
+  };
 }
 
 export function browserSupabase() {
@@ -66,19 +77,16 @@ export function browserSupabase() {
         if (!response.ok) throw new Error("로그아웃에 실패했어요. 잠시 후 다시 시도해주세요.");
       }
       // The legacy OAuth session is only needed for upgrading an existing account.
-      await oauthClient().auth.signOut({ scope: "local" });
-      forgetAccountSession();
+      if (legacy || localStorage.getItem("hamster-auth")) await oauthClient().auth.signOut({ scope: "local" });
+      if (session) forgetAccountSession(session.access_token);
     },
     onAuthStateChange(callback: (event: string, session: AppSession | null) => void) {
       const update = () => callback("ACCOUNT_CHANGED", localSession());
-      const onStorage = (event: StorageEvent) => { if (event.key === accountKey || event.key === null) update(); };
-      window.addEventListener(accountKey, update);
-      window.addEventListener("storage", onStorage);
+      const unsubscribeAccount = onStoredAccountChange(update);
       const { data } = oauthClient().auth.onAuthStateChange((event, session) => callback(event, localSession() || session));
       return { data: { subscription: { unsubscribe() {
         data.subscription.unsubscribe();
-        window.removeEventListener(accountKey, update);
-        window.removeEventListener("storage", onStorage);
+        unsubscribeAccount();
       } } } };
     },
   } };

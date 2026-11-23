@@ -3,10 +3,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { communityMessage, communityRequest, enterStudy } from "@/lib/community-client";
+import { browserSupabase, currentAccountId } from "@/lib/supabase-browser";
+import { rememberedStudy } from "@/lib/study-navigation";
 import { validCode, type CommunityOptions, type JoinResult, type StudyList, type StudyPreview } from "@/lib/community";
 import { DEFAULT_GOALS, type GoalPolicy } from "@/lib/study-goals";
 import { GoalPolicyFields } from "./study-goal-fields";
 import { CommunityFields, StudyCard } from "./community-fields";
+import { NicknameSettings } from "./account-settings";
 import styles from "./study-community.module.css";
 
 type Tab = "mine" | "search" | "create";
@@ -122,9 +125,31 @@ function InviteEntry() {
 }
 
 export function StudyBrowser() {
-  const [tab, setTab] = useState<Tab>(() => typeof window !== "undefined" && localStorage.getItem("hamster-study-id") ? "mine" : "search");
+  const accountId = typeof window !== "undefined" && currentAccountId();
+  const hasCalendar = accountId && rememberedStudy(accountId);
+  const [tab, setTab] = useState<Tab>(hasCalendar ? "mine" : "search");
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  async function logout() {
+    setLoggingOut(true); setLogoutError("");
+    try {
+      await browserSupabase().auth.signOut();
+      window.location.replace("/");
+    } catch (cause) {
+      setLoggingOut(false); setLogoutError(communityMessage(cause));
+    }
+  }
   return <main className={styles.shell}>
-    <header className={styles.heading}><h1>스터디</h1><Link href="/dashboard">달력으로</Link></header>
+    <header className={styles.heading}><h1>스터디</h1><div className={styles.actions}>
+      {hasCalendar && <Link href="/dashboard">달력으로</Link>}
+      <button className="secondary-button" aria-expanded={accountOpen} onClick={() => setAccountOpen(!accountOpen)}>내 계정</button>
+    </div></header>
+    {accountOpen && <section aria-label="내 계정" className={styles.card}>
+      <NicknameSettings />
+      <button className="secondary-button" disabled={loggingOut} onClick={() => void logout()}>로그아웃</button>
+      {logoutError && <p role="alert">{logoutError}</p>}
+    </section>}
     <nav className={styles.tabs} aria-label="스터디 탐색">
       {([["mine","내 스터디"],["search","스터디 찾기"],["create","새 스터디"]] as const).map(([value,label]) =>
         <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}

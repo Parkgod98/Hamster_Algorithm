@@ -4,7 +4,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { RECOVERY_QUESTIONS } from "@/lib/account";
 import { accountRequest } from "@/lib/account-browser";
 import { clearInstallation } from "@/lib/github-connect-browser";
-import { accountDestination, browserSupabase, saveAccountSession } from "@/lib/supabase-browser";
+import { browserSupabase, saveAccountSession } from "@/lib/supabase-browser";
+import { accountDestination } from "@/lib/study-navigation";
 
 type Mode = "login" | "register" | "recover" | "migrate";
 export function AuthPanel({ migration }: { migration?: { token: string; nickname: string } }) {
@@ -52,7 +53,7 @@ export function AuthPanel({ migration }: { migration?: { token: string; nickname
       }
       if (result.token && result.userId) {
         saveAccountSession(result.token,result.userId);
-        window.location.replace(accountDestination());
+        window.location.replace(accountDestination(action === "register"));
       }
     } catch (error) { setMessage(error instanceof Error ? error.message : "다시 시도해주세요."); }
     finally { setBusy(false); }

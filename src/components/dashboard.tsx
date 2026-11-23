@@ -140,7 +140,13 @@ export function Dashboard({githubAppSlug}:{githubAppSlug:string}){
     }
   }
   async function addManualSubmission(){if(!data?.study||selectedDate>data.studyDate)return;setBusy("manual");const access=await accessToken();const r=await fetch("/api/submissions/manual",{method:"POST",headers:{Authorization:`Bearer ${access}`,"Content-Type":"application/json"},body:JSON.stringify({studyId:data.study.id,studyDate:selectedDate,platform:manualPlatform,difficulty:manualDifficulty,count:manualCount})});const p=await r.json() as{error?:string;inserted?:number};setBusy("");if(!r.ok){setToast(p.error??"수동 인증을 등록하지 못했습니다.");return;}invalidateGrowthStatsCache(data.currentUserId,data.study.id);setToast(`${p.inserted??manualCount}문제를 수동 인증으로 등록했습니다.`);setManualOpen(false);await reload(month)}
-  async function logout(){if(data?.study)for(const member of data.members)invalidateGrowthStatsCache(member.userId,data.study.id);clear();await browserSupabase().auth.signOut();localStorage.removeItem("hamster-study-id");window.location.replace("/")}
+  async function logout(){
+    try {
+      await browserSupabase().auth.signOut();
+      if(data?.study)for(const member of data.members)invalidateGrowthStatsCache(member.userId,data.study.id);
+      clear();window.location.replace("/");
+    } catch (error) {setToast(error instanceof Error ? error.message : "로그아웃에 실패했어요.");}
+  }
   async function moveMonth(delta:number){const next=shiftMonth(month,delta);setDetailOpen(false);setManualOpen(false);await navigate(next)}
   async function goToday(){const latest=await navigate();if(!latest)return;setSelectedDate(latest.studyDate);setDetailOpen(true);setManualOpen(false)}
   async function openDate(date:string,currentMonth:boolean){if(!currentMonth){const next=await navigate(date.slice(0,7));if(!next)return;}setSelectedDate(date);setDetailOpen(true);setManualOpen(false)}
@@ -171,10 +177,7 @@ export function Dashboard({githubAppSlug}:{githubAppSlug:string}){
   }
 
   if(error)return<main className="app-shell"><div className="empty-state"><strong>대시보드를 불러오지 못했습니다.</strong><p>{error}</p><Link href="/studies">스터디 선택</Link><button className="secondary-button" onClick={()=>void reload(month)}>다시 시도</button></div></main>;
-  if(!data)return<main className="app-shell"><div className="loading-state">햄쮸터를 불러오는 중…</div></main>;
-  if(!data.study)return <main className="app-shell"><section className="onboarding-card">
-    <h1>참여할 스터디를 골라주세요</h1><Link className="primary-button" href="/studies">스터디 찾기 · 만들기</Link>
-    <NicknameSettings /></section></main>;
+  if(!data?.study)return<main className="app-shell"><div className="loading-state">햄쮸터를 불러오는 중…</div></main>;
   const study=data.study;
   const editableRules=rulesDraft??cloneRules(study);
   const calendarView=<><section className="calendar-toolbar"><div className="month-navigation"><button className="nav-button" onClick={()=>void moveMonth(-1)}>‹</button><h2>{formatMonth(month)}</h2><button className="nav-button" onClick={()=>void moveMonth(1)}>›</button><button className="today-button" onClick={()=>void goToday()}>오늘</button><div className="view-toggle"><button className={calendarMode==="week"?"active":""} onClick={()=>setCalendarMode("week")}>주</button><button className={calendarMode==="month"?"active":""} onClick={()=>setCalendarMode("month")}>월</button></div></div><div className="summary-strip"><span><strong>{data.members.length}</strong>명</span><span><strong>{data.summary.complete}</strong> 완료</span><span><strong>{data.summary.postponed}</strong> 미루기</span><span><strong>{data.summary.missed}</strong> 미제출</span></div></section><section className={`calendar-card mode-${calendarMode}`} aria-busy={refreshing}><div className="weekday-row">{WEEKDAYS.map(d=><div key={d}>{d}</div>)}</div><div className="calendar-grid">{visibleSlots.map(slot=>{const day=dayByDate.get(slot.date);const today=slot.date===data.studyDate;const selected=slot.date===selectedDate;return<button key={slot.date} className={`calendar-day${slot.currentMonth?"":" is-adjacent"}${today?" is-today":""}${selected?" is-selected":""}`} onClick={()=>void openDate(slot.date,slot.currentMonth)} aria-pressed={selected}><div className="day-heading"><span>{Number(slot.date.slice(-2))}</span>{today&&<em>오늘</em>}</div><div className="day-members">{(day?.members??[]).filter(m=>m.state!=="inactive").map(m=>{const meta=STATE_META[m.state];return<div key={m.userId} className={`member-chip state-${m.state}`} title={`${m.name} · ${meta.label}`}><span className="member-name">{m.name}</span><span className="member-state">{meta.icon}</span></div>})}</div></button>})}</div></section><p className="calendar-footnote">인증일은 Asia/Seoul 기준 오전 4시에 바뀝니다. 날짜를 누르면 풀이와 인정량을 확인할 수 있습니다.</p></>;

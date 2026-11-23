@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { accountDestination,browserSupabase,githubProofClient } from "@/lib/supabase-browser";
+import { browserSupabase,githubProofClient } from "@/lib/supabase-browser";
+import { accountDestination } from "@/lib/study-navigation";
 import { clearInstallation,pendingInstallation } from "@/lib/github-connect-browser";
 export default function AuthCallback() {
   const [message,setMessage]=useState("GitHub 계정을 확인하고 있어요…");

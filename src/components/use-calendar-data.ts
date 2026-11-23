@@ -1,11 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { browserSupabase, forgetAccountSession } from "@/lib/supabase-browser";
+import { browserSupabase, forgetAccountSession, type AppSession } from "@/lib/supabase-browser";
+import { validId } from "@/lib/community";
+import { forgetStudy, rememberedStudy, rememberStudy } from "@/lib/study-navigation";
 import { createCalendarCache, type CalendarSnapshot } from "@/lib/calendar-cache";
 import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 
-class CalendarAccessError extends Error {}
+class CalendarAccessError extends Error {
+  constructor(readonly status: number, readonly session: AppSession, readonly studyId: string) {
+    super("대시보드 접근 권한을 확인해주세요.");
+  }
+}
 
 /** The cache lives with Dashboard, not in a server process or Service Worker. */
 export function useCalendarData<T extends CalendarSnapshot>() {
@@ -40,7 +46,13 @@ export function useCalendarData<T extends CalendarSnapshot>() {
         cache.clear(); liveData.current = null; setData(null);
       }
       viewer.current = session.user.id;
-      const studyId = new URLSearchParams(window.location.search).get("studyId") || liveData.current?.study?.id || localStorage.getItem("hamster-study-id") || "";
+      const studyId = new URLSearchParams(window.location.search).get("studyId")
+        || liveData.current?.study?.id || rememberedStudy(session.user.id) || "";
+      if (studyId && !validId(studyId)) {
+        forgetStudy(session.user.id, studyId);
+        window.location.replace("/studies");
+        return null;
+      }
       const scope = { viewerId: session.user.id, studyId, month };
       if (force) {
         if (scope.studyId) cache.invalidateStudy(scope.viewerId, scope.studyId);
@@ -64,21 +76,35 @@ export function useCalendarData<T extends CalendarSnapshot>() {
         const response = await fetch(`/api/dashboard?${new URLSearchParams({ month, studyId })}`, {
           headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store", signal,
         });
-        if (response.status === 401 && session.access_token.startsWith("hs1_")) {
-          forgetAccountSession();
-          window.location.replace("/");
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          throw new CalendarAccessError(response.status, session, studyId);
         }
-        if (response.status === 401 || response.status === 403) throw new CalendarAccessError("로그인과 스터디 참여 상태를 다시 확인해주세요.");
         if (!response.ok) throw new Error("달력을 불러오지 못했습니다.");
         return await response.json() as T;
       });
       if (!active()) return null;
+      if (!next.study) {
+        window.location.replace("/studies");
+        return null;
+      }
+      rememberStudy(session.user.id, next.study.id);
       apply(next);
       return next;
     } catch (caught) {
       if (!active() || (caught instanceof Error && caught.name === "AbortError")) return null;
       if (caught instanceof CalendarAccessError || (caught instanceof Error && caught.message === "Calendar response scope mismatch")) {
         cache.clear(); liveData.current = null; setData(null);
+        if (caught instanceof CalendarAccessError) {
+          if (caught.status === 401 && forgetAccountSession(caught.session.access_token)) {
+            window.location.replace("/");
+            return null;
+          }
+          if (caught.status !== 401 && caught.studyId) {
+            forgetStudy(caught.session.user.id, caught.studyId);
+            window.location.replace("/studies");
+            return null;
+          }
+        }
         setError("로그인과 스터디 참여 상태를 다시 확인해주세요.");
       } else if (liveData.current) {
         setWarning("최신 정보를 가져오지 못했어요. 이전 화면을 표시 중입니다. 새로고침해주세요.");
