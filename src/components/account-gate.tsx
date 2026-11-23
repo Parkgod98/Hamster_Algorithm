@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, type ReactNode } from "react";
 import { AuthPanel } from "./auth-panel";
+import { AppBrand } from "./app-brand";
 import { accountRequest } from "@/lib/account-browser";
 import { browserSupabase, currentAccountId, onStoredAccountChange } from "@/lib/supabase-browser";
 import { rememberAccountReturn } from "@/lib/study-navigation";
@@ -38,5 +39,5 @@ export function AccountGate({ children, allowGuest = false }: { children: ReactN
     return ()=>{ active = false; unsubscribe(); };
   },[allowGuest,accountVersion]);
   if (ready) return children;
-  return <main className="shell"><section className="card">{legacy ? <><h1>햄쮸터 계정 전환</h1><AuthPanel migration={legacy}/></> : <p role="status">{message}</p>}</section></main>;
+  return <main className="account-page"><AppBrand /><section>{legacy ? <><h1>햄쮸터 계정 전환</h1><AuthPanel migration={legacy}/></> : <p role="status">{message}</p>}</section></main>;
 }

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { AppBrand } from "@/components/app-brand";
 import { browserSupabase, githubProofClient } from "@/lib/supabase-browser";
 import { bindInstallation,pendingInstallation } from "@/lib/github-connect-browser";
 
@@ -25,5 +26,5 @@ export default function GithubSetup() {
       if(error)throw new Error("GitHub 계정 확인을 시작하지 못했어요.");
     })().catch(e=>setMessage(e instanceof Error ? e.message : "연결을 다시 시도해주세요."));
   },[]);
-  return <main className="shell"><section className="card"><h1>{message}</h1><a href="/dashboard">대시보드로</a></section></main>;
+  return <main className="account-page"><AppBrand /><section><h1 role="status">{message}</h1><a href="/dashboard">대시보드로</a></section></main>;
 }

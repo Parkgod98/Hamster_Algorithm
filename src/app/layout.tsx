@@ -2,13 +2,14 @@ import type { Metadata, Viewport } from "next";
 import { ClientEnhancements } from "@/components/client-enhancements";
 import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
-import "./account.css";
 import "./enhancements.css";
 import "./push.css";
+import "./theme.css";
+import "./account.css";
 
 export const metadata: Metadata = {
   title: "햄쮸터",
-  description: "알고리즘 스터디 자동 인증",
+  description: "스터디의 매일 인증을 함께 기록하는 햄쮸터 달력",
   applicationName: "햄쮸터",
   manifest: "/manifest.webmanifest",
   icons: {
@@ -26,7 +27,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#242421",
+  themeColor: "#f6f5f1",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

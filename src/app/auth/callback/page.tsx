@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { AppBrand } from "@/components/app-brand";
 import { browserSupabase,githubProofClient } from "@/lib/supabase-browser";
 import { accountDestination } from "@/lib/study-navigation";
 import { clearInstallation,pendingInstallation } from "@/lib/github-connect-browser";
@@ -37,5 +38,5 @@ export default function AuthCallback() {
       location.replace(accountDestination());
     })().catch(error=>setMessage(error instanceof Error?error.message:"다시 로그인해주세요."));
   },[]);
-  return <main className="shell"><section className="card"><h1>{message}</h1><Link href="/">햄쮸터로 돌아가기</Link></section></main>;
+  return <main className="account-page"><AppBrand /><section><h1 role="status">{message}</h1><Link href="/">햄쮸터로 돌아가기</Link></section></main>;
 }

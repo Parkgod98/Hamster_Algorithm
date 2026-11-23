@@ -1,45 +1,44 @@
+import { AppBrand } from "@/components/app-brand";
 import { AuthPanel } from "@/components/auth-panel";
+import styles from "./home.module.css";
 
-const previewDays = [
-  { day: "8", members: [["현성", "✅"], ["세진", "✅"], ["현수", "⏭"]] },
-  { day: "9", members: [["현성", "✅"], ["세진", "✅"], ["현수", "✅"]] },
-  { day: "10", members: [["현성", "✅"], ["세진", "🟡"], ["현수", "✅"]] },
-  { day: "11", members: [["현성", "✅"], ["세진", "✅"], ["현수", "❌"]], today: true },
-  { day: "12", members: [["현성", "·"], ["세진", "·"], ["현수", "·"]] },
-  { day: "13", members: [["현성", "·"], ["세진", "·"], ["현수", "·"]] },
-  { day: "14", members: [["현성", "·"], ["세진", "·"], ["현수", "·"]] },
-];
+const exampleWeek = [
+  ["월", 16, "완료"], ["화", 17, "완료"], ["수", 18, "미루기"],
+  ["목", 19, "완료"], ["금", 20, ""], ["토", 21, ""], ["일", 22, ""],
+] as const;
+
+function CalendarPreview() {
+  return (
+    <figure className={styles.preview} aria-label="스터디 인증 달력 예시">
+      <figcaption>인증 달력 미리보기</figcaption>
+      <p className={styles.month}>11월<span>2026</span></p>
+      <ol className={styles.week}>
+        {exampleWeek.map(([weekday, date, state]) => (
+          <li key={date} className={date === 19 ? styles.selected : undefined}>
+            <span>{weekday}</span><strong>{date}</strong>
+            <i data-state={state} aria-label={state || "예정"} />
+          </li>
+        ))}
+      </ol>
+      <div className={styles.day}>
+        <h2>19일 목요일</h2>
+        <ul>
+          <li><span className={styles.avatar}>윤</span><div><strong>윤서</strong><small>영어 인증</small></div><span className={styles.done}>완료</span></li>
+          <li><span className={styles.avatar}>지</span><div><strong>지우</strong><small>알고리즘 인증</small></div><span className={styles.done}>완료</span></li>
+        </ul>
+      </div>
+    </figure>
+  );
+}
 
 export default function Home() {
-  return <main className="landing-shell">
-    <nav className="landing-nav">
-      <div className="landing-brand"><span>🐹</span><strong>햄쮸터</strong></div>
-    </nav>
-
-    <section className="landing-hero">
-      <div className="landing-copy">
-        <h1>함께 공부하고,<br /><span>매일 인증해요.</span></h1>
-        <p className="landing-description">알고리즘 풀이를 자동으로 모으고, 영어 공부를 기록해요. 스터디마다 정한 목표를 달력에서 함께 확인하세요.</p>
-        <AuthPanel />
+  return (
+    <main className={styles.home}>
+      <header className={styles.header}><AppBrand /></header>
+      <div className={styles.content}>
+        <section className={styles.access} aria-label="햄쮸터 계정"><AuthPanel /></section>
+        <CalendarPreview />
       </div>
-
-      <div className="product-preview" aria-label="햄쮸터 월간 인증 캘린더 미리보기">
-        <div className="preview-window-bar"><span></span><span></span><span></span><strong>햄쮸터 알고리즘</strong></div>
-        <div className="preview-header"><div><small>2026년</small><strong>9월</strong></div><div className="preview-stats"><span>3명</span><span>완료 18</span><span>미루기 2</span></div></div>
-        <div className="preview-weekdays">{["월", "화", "수", "목", "금", "토", "일"].map((day) => <span key={day}>{day}</span>)}</div>
-        <div className="preview-calendar">
-          {previewDays.map((date) => <div key={date.day} className={`preview-day${date.today ? " today" : ""}`}>
-            <div className="preview-date">{date.day}{date.today && <em>오늘</em>}</div>
-            {date.members.map(([name, state]) => <div className="preview-member" key={name}><span>{name}</span><b>{state}</b></div>)}
-          </div>)}
-        </div>
-      </div>
-    </section>
-
-    <section className="landing-flow" aria-label="햄쮸터 사용 흐름">
-      <article><span>01</span><div><strong>평소처럼 풉니다</strong><p>BaekjoonHub가 개인 Repository에 풀이를 push합니다.</p></div></article>
-      <article><span>02</span><div><strong>햄쮸터가 판정합니다</strong><p>난이도, 미루기, 선풀이와 스터디별 규칙을 적용합니다.</p></div></article>
-      <article><span>03</span><div><strong>달력만 확인합니다</strong><p>같은 그룹 멤버들의 인증 상태를 한 달 단위로 봅니다.</p></div></article>
-    </section>
-  </main>;
+    </main>
+  );
 }

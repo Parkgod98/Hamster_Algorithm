@@ -1,0 +1,47 @@
+:root {
+  --paper: #f6f5f1;
+  --surface: #fff;
+  --ink: #262622;
+  --muted: #676861;
+  --line: #deded6;
+  --accent: #a54f38;
+  --accent-soft: #f5e8df;
+  --control-radius: 12px;
+  --segment-track: #e9e8e2;
+  --segment-shadow: 0 1px 4px #28251c18;
+  --header-width: 1080px;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  color-scheme: light;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+button, input, textarea, select { font-family: inherit; }
+:where(a, button, input, textarea, select, summary):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.app-brand strong { font-size: 18px; font-weight: 750; letter-spacing: -.05em; }
+.app-mark { width: 36px; height: 36px; flex: none; border-radius: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}

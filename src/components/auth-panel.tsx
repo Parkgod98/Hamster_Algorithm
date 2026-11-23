@@ -72,9 +72,14 @@ export function AuthPanel({ migration }: { migration?: { token: string; nickname
   const submitText = mode === "recover" ? (question ? "비밀번호 재설정" : "복구 질문 확인")
     : mode === "migrate" ? "새 로그인 방법 등록" : mode === "register" ? "가입하기" : "로그인";
   return <div className="account-panel">
+    {!migration && <h1 className="account-title">{mode === "recover" ? "비밀번호 찾기" : mode === "register" ? "계정 만들기" : "로그인"}</h1>}
+    {(mode === "login" || mode === "register") && <div className="account-modes" role="group" aria-label="계정 메뉴">
+      <button type="button" aria-pressed={mode === "login"} disabled={busy} onClick={() => changeMode("login")}>로그인</button>
+      <button type="button" aria-pressed={mode === "register"} disabled={busy} onClick={() => changeMode("register")}>새 계정 만들기</button>
+    </div>}
     {mode === "migrate" && <p>햄쮸터가 업데이트됐어요. 기존 스터디와 기록을 이어 쓸 로그인 아이디와 복구 방법을 등록해주세요.</p>}
     <form key={mode} onSubmit={submit}>
-      <label>로그인 아이디<input name="login" autoComplete="username" value={login} readOnly={mode === "recover" && !!question}
+      <label>로그인 아이디<input name="login" autoComplete="username" autoCapitalize="none" spellCheck={false} value={login} readOnly={mode === "recover" && !!question}
         onChange={e=>setLogin(e.target.value)} minLength={2} maxLength={40} required /></label>
       {registration && <label>닉네임<input name="nickname" defaultValue={migration?.nickname} maxLength={40} autoComplete="nickname" required /></label>}
       {(mode !== "recover" || question) && <label>{mode === "recover" ? "새 비밀번호" : "비밀번호"}<input type="password" name="password"
@@ -84,10 +89,9 @@ export function AuthPanel({ migration }: { migration?: { token: string; nickname
         <input name="answer" autoComplete="off" maxLength={256} required /></label>}
       <button type="submit" className="button" disabled={busy}>{busy ? "확인 중…" : submitText}</button>
     </form>
-    {!migration && <div className="account-links">
-      {mode !== "login" && <button onClick={()=>changeMode("login")} type="button">로그인으로</button>}
-      {mode === "login" && <><button onClick={()=>changeMode("register")} type="button">새 계정 만들기</button>
-        <button onClick={()=>changeMode("recover")} type="button">비밀번호 찾기</button>
+    {!migration && mode !== "register" && <div className="account-links">
+      {mode === "recover" && <button disabled={busy} onClick={()=>changeMode("login")} type="button">로그인으로</button>}
+      {mode === "login" && <><button disabled={busy} onClick={()=>changeMode("recover")} type="button">비밀번호 찾기</button>
         <button onClick={()=>void legacyLogin()} type="button" disabled={busy}>기존 GitHub 회원 전환</button></>}
     </div>}
     <p role="status">{message}</p>

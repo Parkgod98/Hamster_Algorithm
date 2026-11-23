@@ -1,109 +1,89 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { communityMessage, communityRequest, enterStudy } from "@/lib/community-client";
 import { browserSupabase, currentAccountId } from "@/lib/supabase-browser";
 import { rememberedStudy } from "@/lib/study-navigation";
 import { validCode, type CommunityOptions, type JoinResult, type StudyList, type StudyPreview } from "@/lib/community";
 import { DEFAULT_GOALS, type GoalPolicy } from "@/lib/study-goals";
+import { AppBrand } from "./app-brand";
 import { GoalPolicyFields } from "./study-goal-fields";
 import { CommunityFields, StudyCard } from "./community-fields";
 import { NicknameSettings } from "./account-settings";
 import styles from "./study-community.module.css";
 
-type Tab = "mine" | "search" | "create";
+type Directory = "mine" | "search";
 
-function CreateStudy() {
+function CreateStudy({ onDismiss }: { onDismiss: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
+  const [step, setStep] = useState<"info" | "rules">("info");
   const [name, setName] = useState("");
   const [options, setOptions] = useState<CommunityOptions>({ description: "", discoverable: true, joinPolicy: "open" });
   const [goals, setGoals] = useState<GoalPolicy>(DEFAULT_GOALS);
   const [studyId, setStudyId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => { dialog.current?.showModal(); }, []);
+  useEffect(() => {
+    title.current?.focus({ preventScroll: true });
+    dialog.current?.scrollTo(0, 0);
+  }, [step]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    setBusy(true); setError("");
+    if (step === "info") { setStep("rules"); return; }
+    setBusy(true);
+    setError("");
     const id = studyId || crypto.randomUUID();
     setStudyId(id);
     try {
       const result = await communityRequest<{ studyId: string }>("/api/studies", { name, goals, studyId: id, ...options });
       enterStudy(result.studyId);
     } catch (cause) {
-      setError(communityMessage(cause)); setBusy(false);
+      setError(communityMessage(cause));
+      setBusy(false);
     }
   }
-  return <form className={styles.form} onSubmit={submit}>
-    <label className={styles.field}>스터디 이름<input required maxLength={80} value={name}
-      onChange={(e) => setName(e.target.value)} /></label>
-    <CommunityFields value={options} onChange={setOptions} />
-    <GoalPolicyFields value={goals} onChange={setGoals} />
-    {error && <p role="alert">{error}</p>}
-    <button className="primary-button" disabled={busy}>{busy ? "개설 중…" : "스터디 개설"}</button>
-  </form>;
-}
 
-function StudyDirectory({ scope }: { scope: "mine" | "search" }) {
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [page, setPage] = useState<{ offset: number; retry: number }>({ offset: 0, retry: 0 });
-  const [studies, setStudies] = useState<StudyPreview[]>([]);
-  const [more, setMore] = useState<number | null>(null);
-  const [busy, setBusy] = useState(true);
-  const [joining, setJoining] = useState("");
-  const [error, setError] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    async function load() {
-      setBusy(true); setError("");
-      if (page.offset === 0) { setStudies([]); setMore(null); }
-      try {
-        const params = new URLSearchParams({ scope, q: query, offset: String(page.offset) });
-        const result = await communityRequest<StudyList>(`/api/studies?${params}`, undefined, controller.signal);
-        if (!controller.signal.aborted) {
-          setStudies((previous) => page.offset ? [...previous, ...result.studies] : result.studies);
-          setMore(result.nextOffset);
-        }
-      } catch (cause) {
-        if (!controller.signal.aborted) setError(communityMessage(cause));
-      } finally {
-        if (!controller.signal.aborted) setBusy(false);
-      }
-    }
-    void load();
-    return () => controller.abort();
-  }, [scope, query, page]);
-  function search(event: FormEvent) {
-    event.preventDefault(); setQuery(input.trim()); setPage({ offset: 0, retry: page.retry + 1 });
-  }
-  async function join(study: StudyPreview) {
-    if (study.memberRole) { enterStudy(study.id); return; }
-    setJoining(study.id); setError("");
-    try {
-      const result = await communityRequest<JoinResult>("/api/studies/join", { studyId: study.id });
-      if (result.status === "joined") enterStudy(result.studyId);
-      else setStudies((all) => all.map((item) => item.id === study.id ? { ...item, pending: true } : item));
-    } catch (cause) { setError(communityMessage(cause)); }
-    finally { setJoining(""); }
-  }
-  return <>
-    {scope === "search" && <form onSubmit={search} className={styles.search}>
-      <input aria-label="스터디 이름 검색" placeholder="스터디 이름" maxLength={80} value={input} onChange={(e) => setInput(e.target.value)} />
-      <button className="primary-button">검색</button>
-    </form>}
-    <div className={styles.grid}>{studies.map((study) =>
-      <StudyCard key={study.id} study={study}>
-        <button className="secondary-button" disabled={joining === study.id || (study.pending && study.joinPolicy === "approval")}
-          onClick={() => void join(study)}>{study.memberRole ? "스터디 열기" : study.pending && study.joinPolicy === "approval" ? "승인 대기 중"
-            : study.joinPolicy === "open" ? "가입하기" : "가입 신청"}</button>
-      </StudyCard>)}</div>
-    {error && <p role="alert">{error} <button className="secondary-button"
-      onClick={() => setPage({ ...page, retry: page.retry + 1 })}>다시 조회</button></p>}
-    {!busy && !error && !studies.length && <p>{scope === "mine" ? "아직 참여한 스터디가 없어요." : "검색된 스터디가 없어요."}</p>}
-    {busy && <p role="status">스터디를 불러오는 중…</p>}
-    {more !== null && !busy && !error && <button className="secondary-button" onClick={() => setPage({ offset: more, retry: 0 })}>더 보기</button>}
-  </>;
+  return <dialog ref={dialog} className={styles.sheet} aria-labelledby="create-study-title" onClose={onDismiss}
+    onCancel={(event) => { if (busy) event.preventDefault(); }}>
+    <div className={styles.sheetHead}>
+      <ol aria-label="스터디 개설 단계" className={styles.steps}>
+        <li aria-current={step === "info" ? "step" : undefined}>모임 정보</li>
+        <li aria-current={step === "rules" ? "step" : undefined}>인증 규칙</li>
+      </ol>
+      <button className={styles.close} type="button" aria-label="스터디 개설 닫기" disabled={busy}
+        onClick={() => dialog.current?.close()}>×</button>
+    </div>
+    <form onSubmit={submit} className={styles.createForm}>
+      <div className={styles.sheetBody}>
+        <h2 id="create-study-title" ref={title} tabIndex={-1}>{step === "info" ? "새 스터디 만들기" : "인증 규칙 정하기"}</h2>
+        {step === "info" ? <CommunityFields value={options} onChange={setOptions}>
+          <label className={styles.field}><span>스터디 이름</span>
+            <input required maxLength={80} pattern={".*\\S.*"} title="스터디 이름을 입력해주세요."
+              value={name} onChange={(event) => setName(event.target.value)} placeholder="예) 퇴근 후 20분 영어" />
+          </label>
+        </CommunityFields> : <>
+          <div className={styles.reviewLine}>
+            <strong>{name}</strong><span>{options.discoverable ? "검색 공개" : "비공개"} · {options.joinPolicy === "open" ? "자유 가입" : "승인 후 가입"}</span>
+          </div>
+          <GoalPolicyFields value={goals} onChange={setGoals} />
+        </>}
+        {error && <p role="alert" className={styles.error}>{error}</p>}
+      </div>
+      <footer className={styles.sheetFoot}>
+        {step === "rules" && <button className={styles.secondary} type="button" disabled={busy}
+          onClick={() => { setStep("info"); setError(""); }}>이전</button>}
+        <button type="submit" className={styles.primary} disabled={busy}>
+          {step === "info" ? "다음 · 인증 규칙" : busy ? "개설 중…" : "스터디 개설"}
+        </button>
+      </footer>
+    </form>
+  </dialog>;
 }
 
 function InviteEntry() {
@@ -116,18 +96,114 @@ function InviteEntry() {
     if (!validCode(code)) { setError("받은 초대 링크나 코드를 확인해 주세요."); return; }
     window.location.assign(`/join/${code}`);
   }
-  return <form onSubmit={open} className={styles.invite}>
-    <label htmlFor="invite-link">초대 링크 또는 코드</label>
-    <div className={styles.search}><input id="invite-link" value={input} onChange={(e) => setInput(e.target.value)} required />
-      <button className="secondary-button">초대 확인</button></div>
-    {error && <p role="alert">{error}</p>}
-  </form>;
+  return <details className={styles.invite}>
+    <summary>초대 링크로 참여</summary>
+    <form onSubmit={open}>
+      <label htmlFor="invite-link">초대 링크 또는 코드</label>
+      <div className={styles.search}><input id="invite-link" value={input} required
+        onChange={(event) => { setInput(event.target.value); setError(""); }} />
+        <button className={styles.secondary}>초대 확인</button>
+      </div>
+      {error && <p role="alert" className={styles.error}>{error}</p>}
+    </form>
+  </details>;
+}
+
+function StudyDirectory({ scope, onSearch, onCreate }: { scope: Directory; onSearch: () => void; onCreate: () => void }) {
+  const [input, setInput] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState({ offset: 0, retry: 0 });
+  const [studies, setStudies] = useState<StudyPreview[]>([]);
+  const [more, setMore] = useState<number | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [joining, setJoining] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [joinError, setJoinError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    async function load() {
+      setBusy(true); setLoadError("");
+      if (page.offset === 0) { setStudies([]); setMore(null); }
+      try {
+        const params = new URLSearchParams({ scope, q: query, offset: String(page.offset) });
+        const result = await communityRequest<StudyList>(`/api/studies?${params}`, undefined, controller.signal);
+        if (!controller.signal.aborted) {
+          setStudies((previous) => page.offset ? [...previous, ...result.studies] : result.studies);
+          setMore(result.nextOffset);
+        }
+      } catch (cause) {
+        if (!controller.signal.aborted) setLoadError(communityMessage(cause));
+      } finally {
+        if (!controller.signal.aborted) setBusy(false);
+      }
+    }
+    void load();
+    return () => controller.abort();
+  }, [scope, query, page]);
+
+  function search(term: string) {
+    setJoinError("");
+    setQuery(term.trim());
+    setPage((previous) => ({ offset: 0, retry: previous.retry + 1 }));
+  }
+  async function join(study: StudyPreview) {
+    if (study.memberRole) { enterStudy(study.id); return; }
+    if (joining) return;
+    setJoining(study.id); setJoinError("");
+    try {
+      const result = await communityRequest<JoinResult>("/api/studies/join", { studyId: study.id });
+      if (result.status === "joined") enterStudy(result.studyId);
+      else setStudies((all) => all.map((item) => item.id === study.id ? { ...item, pending: true } : item));
+    } catch (cause) { setJoinError(communityMessage(cause)); }
+    finally { setJoining(""); }
+  }
+
+  return <>
+    {scope === "search" && <>
+      <form role="search" className={styles.find} onSubmit={(event) => { event.preventDefault(); search(input); }}>
+        <span className={styles.magnifier} aria-hidden="true" />
+        <input type="search" aria-label="스터디 이름 검색" placeholder="스터디 이름으로 검색" maxLength={80}
+          value={input} onChange={(event) => setInput(event.target.value)} />
+        <button className={styles.primary}>검색</button>
+      </form>
+      <InviteEntry />
+    </>}
+    <section className={styles.results} aria-labelledby="directory-heading">
+      <div className={styles.resultHeading}>
+        <h2 id="directory-heading">{scope === "mine" ? "참여 중인 스터디" : query ? "검색 결과" : "공개 스터디"}</h2>
+        {!busy && !loadError && <span>{studies.length}{more !== null ? "+" : ""}개</span>}
+      </div>
+      {!!studies.length && <div className={styles.grid}>{studies.map((study) => {
+        const pending = study.pending && !study.memberRole && study.joinPolicy === "approval";
+        return <StudyCard key={study.id} study={study}>
+          <button className={styles.cardButton} disabled={Boolean(joining) || pending}
+            onClick={() => void join(study)}>
+            {joining === study.id ? "처리 중…" : study.memberRole ? "스터디 열기" : pending ? "승인 대기 중"
+              : study.joinPolicy === "open" ? "바로 가입" : "가입 신청"}
+          </button>
+        </StudyCard>;
+      })}</div>}
+      {joinError && <p role="alert" className={styles.error}>{joinError}</p>}
+      {loadError && <div role="alert" className={styles.empty}><p>{loadError}</p>
+        <button className={styles.secondary} onClick={() => setPage({ ...page, retry: page.retry + 1 })}>다시 조회</button></div>}
+      {!busy && !loadError && !studies.length && <div className={styles.empty}>
+        <p>{scope === "mine" ? "아직 참여한 스터디가 없어요." : query ? "이 이름으로 찾은 스터디가 없어요." : "아직 공개된 스터디가 없어요."}</p>
+        {scope === "mine" ? <button className={styles.secondary} onClick={onSearch}>스터디 찾기</button>
+          : query ? <button className={styles.secondary} onClick={() => { setInput(""); search(""); }}>전체 스터디 보기</button>
+          : <button className={styles.secondary} onClick={onCreate}>첫 스터디 만들기</button>}
+      </div>}
+      {busy && <p className={styles.status} role="status">스터디를 불러오는 중…</p>}
+      {more !== null && !busy && !loadError && <button className={styles.more}
+        onClick={() => setPage({ offset: more, retry: 0 })}>더 보기</button>}
+    </section>
+  </>;
 }
 
 export function StudyBrowser() {
   const accountId = typeof window !== "undefined" && currentAccountId();
   const hasCalendar = accountId && rememberedStudy(accountId);
-  const [tab, setTab] = useState<Tab>(hasCalendar ? "mine" : "search");
+  const [tab, setTab] = useState<Directory>(hasCalendar ? "mine" : "search");
+  const [creating, setCreating] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState("");
@@ -141,20 +217,30 @@ export function StudyBrowser() {
     }
   }
   return <main className={styles.shell}>
-    <header className={styles.heading}><h1>스터디</h1><div className={styles.actions}>
-      {hasCalendar && <Link href="/dashboard">달력으로</Link>}
-      <button className="secondary-button" aria-expanded={accountOpen} onClick={() => setAccountOpen(!accountOpen)}>내 계정</button>
-    </div></header>
-    {accountOpen && <section aria-label="내 계정" className={styles.card}>
+    <header className={styles.topbar}>
+      <AppBrand />
+      <div className={styles.topActions}>
+        {hasCalendar && <Link href="/dashboard">달력으로</Link>}
+        <button type="button" aria-expanded={accountOpen} aria-controls="study-account"
+          onClick={() => setAccountOpen(!accountOpen)}>내 계정</button>
+      </div>
+    </header>
+    {accountOpen && <section id="study-account" aria-label="내 계정" className={styles.account}>
       <NicknameSettings />
-      <button className="secondary-button" disabled={loggingOut} onClick={() => void logout()}>로그아웃</button>
-      {logoutError && <p role="alert">{logoutError}</p>}
+      <button className={styles.secondary} disabled={loggingOut} onClick={() => void logout()}>로그아웃</button>
+      {logoutError && <p role="alert" className={styles.error}>{logoutError}</p>}
     </section>}
-    <nav className={styles.tabs} aria-label="스터디 탐색">
-      {([["mine","내 스터디"],["search","스터디 찾기"],["create","새 스터디"]] as const).map(([value,label]) =>
-        <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}
-    </nav>
-    {tab === "create" ? <CreateStudy /> : <StudyDirectory key={tab} scope={tab} />}
-    {tab === "search" && <InviteEntry />}
+    <div className={styles.content}>
+      <div className={styles.titleRow}>
+        <h1>{tab === "mine" ? "내 스터디" : "스터디 찾기"}</h1>
+        <button className={styles.createButton} onClick={() => setCreating(true)}><span aria-hidden="true">+</span> 스터디 만들기</button>
+      </div>
+      <nav className={styles.tabs} aria-label="스터디 탐색">
+        {([["search", "스터디 찾기"], ["mine", "내 스터디"]] as const).map(([value, label]) =>
+          <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}
+      </nav>
+      <StudyDirectory key={tab} scope={tab} onSearch={() => setTab("search")} onCreate={() => setCreating(true)} />
+    </div>
+    {creating && <CreateStudy onDismiss={() => setCreating(false)} />}
   </main>;
 }
