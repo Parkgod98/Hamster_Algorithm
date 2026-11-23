@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AppBrand } from "@/components/app-brand";
 import { browserSupabase,githubProofClient } from "@/lib/supabase-browser";
 import { clearInstallation,pendingInstallation } from "@/lib/github-connect-browser";
+import { invalidateViews } from "@/lib/view-cache";
 export default function AuthCallback() {
   const [message,setMessage]=useState("GitHub 계정을 확인하고 있어요…");
   const started=useRef(false);
@@ -25,6 +26,7 @@ export default function AuthCallback() {
             Authorization:`Bearer ${session.access_token}`,"Content-Type":"application/json",
           },body:JSON.stringify({installationId:pending.installationId,studyId:pending.studyId,githubToken})});
           if(!response.ok){const result=await response.json();throw new Error(result.error || "연결에 실패했어요.");}
+          invalidateViews(session.user.id, ["repos"]);
         } finally {
           try { await githubProofClient().auth.signOut({scope:"local"}); }
           finally { clearInstallation(); }

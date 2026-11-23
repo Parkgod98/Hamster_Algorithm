@@ -5,14 +5,14 @@ export function rememberAccountReturn() {
   sessionStorage.setItem(returnKey, window.location.pathname + window.location.search);
 }
 
-export function accountDestination(newAccount = false) {
+export function accountDestination(newAccount = false, noStudies = false) {
   const path = sessionStorage.getItem(returnKey);
   sessionStorage.removeItem(returnKey);
   const pathname = path?.split("?")[0];
   if (pathname && /^\/join\/[\w-]+$/.test(pathname)) return pathname;
   if (pathname === "/studies" || newAccount) return "/studies";
   if (path && /^\/dashboard\?studyId=[\da-f-]+$/i.test(path)) return path;
-  return "/dashboard";
+  return noStudies ? "/studies" : "/dashboard";
 }
 
 function selectionKey(viewerId: string) {

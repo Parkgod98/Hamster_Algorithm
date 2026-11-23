@@ -132,6 +132,8 @@ A형 취득자의 BOJ 최소 난이도 Silver 3 규칙은 멤버별 자격 속�
 - Web App Manifest의 `display: standalone`과 `/dashboard` start URL을 사용합니다.
 - Chromium 계열은 install prompt를 이용하고 iOS Safari는 `홈 화면에 추가` 안내를 제공합니다.
 - Service Worker는 인증 API와 navigation을 cache하지 않습니다.
+- 같은 계정에서 이미 본 달력·날짜 상세·사진·검색·설정은 실행 중인 앱의 메모리에서 다시 엽니다. 조회 데이터 예산은 약 8 MiB이며 최대 100개 항목, 월 달력 12개, 인증 사진 4장입니다. 한도를 넘으면 오래 보지 않은 항목부터 비웁니다. 앱 종료·새로고침·로그아웃 시 조회 캐시는 비워지고 자동 로그인과 마지막 스터디 선택은 유지됩니다.
+- 열린 앱은 서버의 변경 신호를 받아 관련 날짜와 회원만 갱신합니다. 5분 이상 백그라운드에 있었거나 연결이 끊겼으면 복귀할 때 변경 이력을 대조합니다. 오전 4시 인증일 전환과 미루기 마감, 가입·권한·인증의 최종 판정은 계속 서버 기준을 따릅니다.
 - Service Worker가 Web Push 수신과 notification click을 처리합니다.
 - 햄쮸터 기기 세션은 localStorage에 유지하고 서버가 유효성을 확인합니다.
 - 사용자가 설정에서 직접 로그아웃하면 session을 종료합니다.

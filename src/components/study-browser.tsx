@@ -2,8 +2,13 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { communityMessage, communityRequest, enterStudy } from "@/lib/community-client";
+import { useRouter } from "next/navigation";
+import { communityMessage, communityRequest, studyPath } from "@/lib/community-client";
 import { browserSupabase, currentAccountId } from "@/lib/supabase-browser";
+import { cachedDirectoryPages, directoryKey, type DirectoryScope } from "@/lib/directory-cache";
+import { studyDateFromTimestamp } from "@/lib/study-day";
+import { invalidateViews, peekView, putView, readView } from "@/lib/view-cache";
+import { useViewRevision } from "./use-view-revision";
 import { rememberedStudy } from "@/lib/study-navigation";
 import { validCode, type CommunityOptions, type JoinResult, type StudyList, type StudyPreview } from "@/lib/community";
 import { DEFAULT_GOALS, type GoalPolicy } from "@/lib/study-goals";
@@ -13,9 +18,12 @@ import { CommunityFields, StudyCard } from "./community-fields";
 import { NicknameSettings } from "./account-settings";
 import styles from "./study-community.module.css";
 
-type Directory = "mine" | "search";
+type Directory = DirectoryScope;
+type BrowsePosition = { query: string; offset: number; scroll: number };
+const navigationOptions = { ttlMs: 30 * 60_000 };
 
-function CreateStudy({ onDismiss }: { onDismiss: () => void }) {
+function CreateStudy({ viewerId, onDismiss }: { viewerId: string; onDismiss: () => void }) {
+  const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const [step, setStep] = useState<"info" | "rules">("info");
@@ -41,8 +49,9 @@ function CreateStudy({ onDismiss }: { onDismiss: () => void }) {
     const id = studyId || crypto.randomUUID();
     setStudyId(id);
     try {
-      const result = await communityRequest<{ studyId: string }>("/api/studies", { name, goals, studyId: id, ...options });
-      enterStudy(result.studyId);
+      const result = await communityRequest<{ studyId: string }>("/api/studies", { name, goals, studyId: id, ...options }, undefined, viewerId);
+      invalidateViews(viewerId, ["directory:"]);
+      router.push(studyPath(result.studyId));
     } catch (cause) {
       setError(communityMessage(cause));
       setBusy(false);
@@ -87,6 +96,7 @@ function CreateStudy({ onDismiss }: { onDismiss: () => void }) {
 }
 
 function InviteEntry() {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   function open(event: FormEvent) {
@@ -94,7 +104,7 @@ function InviteEntry() {
     const value = input.trim().replace(/\/$/, "");
     const code = value.includes("/") ? value.split("/").at(-1) : value;
     if (!validCode(code)) { setError("받은 초대 링크나 코드를 확인해 주세요."); return; }
-    window.location.assign(`/join/${code}`);
+    router.push(`/join/${code}`);
   }
   return <details className={styles.invite}>
     <summary>초대 링크로 참여</summary>
@@ -109,51 +119,100 @@ function InviteEntry() {
   </details>;
 }
 
-function StudyDirectory({ scope, onSearch, onCreate }: { scope: Directory; onSearch: () => void; onCreate: () => void }) {
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [page, setPage] = useState({ offset: 0, retry: 0 });
-  const [studies, setStudies] = useState<StudyPreview[]>([]);
-  const [more, setMore] = useState<number | null>(null);
-  const [busy, setBusy] = useState(true);
+function StudyDirectory({ viewerId, scope, onSearch, onCreate }: { viewerId: string; scope: Directory; onSearch: () => void; onCreate: () => void }) {
+  const router = useRouter();
+  const positionKey = `browse-position:${scope}`;
+  const [position] = useState(() => peekView<BrowsePosition>(viewerId, positionKey));
+  const [input, setInput] = useState(position?.query ?? "");
+  const [query, setQuery] = useState(position?.query ?? "");
+  const [page, setPage] = useState({ offset: position?.offset ?? 0, retry: 0 });
+  const day = studyDateFromTimestamp(new Date().toISOString());
+  const revision = useViewRevision(viewerId, `directory:${scope}:`);
+  const resultKey = JSON.stringify([viewerId, scope, query, day, revision]);
+  const [result, setResult] = useState<{ key: string; offset: number; list: StudyList } | undefined>(() => {
+    const pages = cachedDirectoryPages(viewerId, scope, query, page.offset, day);
+    const last = pages.at(-1);
+    if (!last) return;
+    return { key: resultKey, offset: last.list.nextOffset === null || last.list.nextOffset > page.offset ? page.offset : -1,
+      list: { studies: pages.flatMap(item => item.list.studies), nextOffset: last.list.nextOffset } };
+  });
+  const restoredScroll = useRef(position?.scroll ?? 0);
   const [joining, setJoining] = useState("");
   const [loadError, setLoadError] = useState("");
   const [joinError, setJoinError] = useState("");
+  const sameResult = result?.key === resultKey;
+  const studies = sameResult ? result.list.studies : [];
+  const more = sameResult ? result.list.nextOffset : null;
+  const busy = !loadError && (!sameResult || result.offset !== page.offset);
   useEffect(() => {
-    const controller = new AbortController();
+    let top = restoredScroll.current || window.scrollY;
+    const track = () => { top = window.scrollY; };
+    const remember = () => {
+      if (currentAccountId() === viewerId) {
+        putView(viewerId, positionKey, { query, offset: page.offset, scroll: top }, navigationOptions);
+      }
+    };
+    window.addEventListener("scroll", track, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", track);
+      remember();
+    };
+  }, [viewerId, positionKey, query, page.offset]);
+  useEffect(() => {
+    if (!sameResult || busy || !restoredScroll.current) return;
+    window.scrollTo(0, restoredScroll.current);
+    restoredScroll.current = 0;
+  }, [sameResult, busy]);
+  useEffect(() => {
+    if (!viewerId) return;
+    let active = true;
     async function load() {
-      setBusy(true); setLoadError("");
-      if (page.offset === 0) { setStudies([]); setMore(null); }
+      setLoadError("");
       try {
-        const params = new URLSearchParams({ scope, q: query, offset: String(page.offset) });
-        const result = await communityRequest<StudyList>(`/api/studies?${params}`, undefined, controller.signal);
-        if (!controller.signal.aborted) {
-          setStudies((previous) => page.offset ? [...previous, ...result.studies] : result.studies);
-          setMore(result.nextOffset);
-        }
+        const list: StudyList = { studies: [], nextOffset: 0 };
+        do {
+          const offset: number = list.nextOffset!;
+          const params = new URLSearchParams({ scope, q: query, offset: String(offset) });
+          const chunk = await readView<StudyList>(viewerId, directoryKey(scope, query, offset, day),
+            signal => communityRequest(`/api/studies?${params}`, undefined, signal, viewerId));
+          if (!active) return;
+          list.studies.push(...chunk.studies);
+          list.nextOffset = chunk.nextOffset;
+        } while (list.nextOffset !== null && list.nextOffset <= page.offset);
+        setResult({ key: resultKey, offset: page.offset, list });
       } catch (cause) {
-        if (!controller.signal.aborted) setLoadError(communityMessage(cause));
-      } finally {
-        if (!controller.signal.aborted) setBusy(false);
+        if (active) setLoadError(communityMessage(cause));
       }
     }
     void load();
-    return () => controller.abort();
-  }, [scope, query, page]);
+    return () => { active = false; };
+  }, [viewerId, scope, query, page, resultKey, day]);
 
   function search(term: string) {
     setJoinError("");
-    setQuery(term.trim());
+    const next = term.trim();
+    if (next.toLowerCase() === query.toLowerCase() && !loadError &&
+      peekView<StudyList>(viewerId, directoryKey(scope, query, 0, day))) return;
+    restoredScroll.current = 0;
+    setQuery(next);
     setPage((previous) => ({ offset: 0, retry: previous.retry + 1 }));
   }
   async function join(study: StudyPreview) {
-    if (study.memberRole) { enterStudy(study.id); return; }
+    if (study.memberRole) { router.push(studyPath(study.id)); return; }
     if (joining) return;
     setJoining(study.id); setJoinError("");
     try {
-      const result = await communityRequest<JoinResult>("/api/studies/join", { studyId: study.id });
-      if (result.status === "joined") enterStudy(result.studyId);
-      else setStudies((all) => all.map((item) => item.id === study.id ? { ...item, pending: true } : item));
+      const result = await communityRequest<JoinResult>("/api/studies/join", { studyId: study.id }, undefined, viewerId);
+      const pages = cachedDirectoryPages(viewerId, scope, query, page.offset, day);
+      invalidateViews(viewerId, ["directory:", "invite:"]);
+      if (result.status === "pending") {
+        for (const { key, list } of pages) {
+          putView(viewerId, key, { ...list, studies: list.studies.map(
+            item => item.id === study.id ? { ...item, pending: true } : item
+          ) });
+        }
+      }
+      if (result.status === "joined") router.push(studyPath(result.studyId));
     } catch (cause) { setJoinError(communityMessage(cause)); }
     finally { setJoining(""); }
   }
@@ -200,9 +259,13 @@ function StudyDirectory({ scope, onSearch, onCreate }: { scope: Directory; onSea
 }
 
 export function StudyBrowser() {
-  const accountId = typeof window !== "undefined" && currentAccountId();
+  const accountId = typeof window !== "undefined" ? currentAccountId() ?? "" : "";
   const hasCalendar = accountId && rememberedStudy(accountId);
-  const [tab, setTab] = useState<Directory>(hasCalendar ? "mine" : "search");
+  const [tab, setTab] = useState<Directory>(() => peekView<Directory>(accountId, "browse-tab") ?? (hasCalendar ? "mine" : "search"));
+  function openTab(next: Directory) {
+    putView(accountId, "browse-tab", next, navigationOptions);
+    setTab(next);
+  }
   const [creating, setCreating] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -237,10 +300,10 @@ export function StudyBrowser() {
       </div>
       <nav className={styles.tabs} aria-label="스터디 탐색">
         {([["search", "스터디 찾기"], ["mine", "내 스터디"]] as const).map(([value, label]) =>
-          <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}
+          <button key={value} type="button" aria-pressed={tab === value} onClick={() => openTab(value)}>{label}</button>)}
       </nav>
-      <StudyDirectory key={tab} scope={tab} onSearch={() => setTab("search")} onCreate={() => setCreating(true)} />
+      <StudyDirectory key={accountId + tab} viewerId={accountId} scope={tab} onSearch={() => openTab("search")} onCreate={() => setCreating(true)} />
     </div>
-    {creating && <CreateStudy onDismiss={() => setCreating(false)} />}
+    {creating && <CreateStudy viewerId={accountId} onDismiss={() => setCreating(false)} />}
   </main>;
 }
