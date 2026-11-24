@@ -1,0 +1,52 @@
+name: Isolated preview integration
+
+on: pull_request
+permissions:
+  contents: read
+
+jobs:
+  integrated-preview:
+    name: Verify release against isolated Supabase and Next.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3412
+      HAMSTER_PROGRESS_MODE: 'on'
+      HAMSTER_PROGRESS_STUDIES: '*'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: supabase/setup-cli@v1.6.0
+        with:
+          version: 2.75.0
+      - name: Start the previous release schema on the runner
+        run: |
+          export STACK="$RUNNER_TEMP/hamster-preview"
+          echo "STACK=$STACK" >> "$GITHUB_ENV"
+          mkdir -p "$STACK"
+          supabase init --workdir "$STACK"
+          git archive 696fa92c30db9d9a571516ef5ec9b30424b36f77 supabase/migrations | tar -x -C "$STACK"
+          supabase start --workdir "$STACK" -x studio,imgproxy,edge-runtime,postgres-meta,logflare,vector,supavisor,storage-api 1>/dev/null
+          node scripts/verify-preview-flows.mjs config
+      - run: npm ci
+      - run: npm run build
+      - name: Exercise account and calendar paths across two release schemas
+        env:
+          VERCEL_ENV: preview
+        run: |
+          npm start -- --hostname 127.0.0.1 --port 3412 >"$RUNNER_TEMP/hamster-next.log" 2>&1 &
+          next_pid=$!
+          trap 'kill "$next_pid" 2>/dev/null || true' EXIT
+          curl --silent --show-error --fail --retry 20 --retry-connrefused --retry-delay 1 "$NEXT_PUBLIC_APP_URL/" >/dev/null
+          node scripts/verify-preview-flows.mjs before
+          node scripts/migrate-release.mjs --local
+          node scripts/migrate-release.mjs --local
+          node scripts/verify-preview-flows.mjs after
+      - name: Discard the ephemeral database
+        if: always()
+        run: supabase stop --workdir "$STACK" --no-backup
