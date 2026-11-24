@@ -1,5 +1,7 @@
 "use client";
 
+import { ReleaseNotice } from "./release-notice";
+
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -222,6 +224,7 @@ function StudyDirectory({ viewerId, scope, onSearch, onCreate }: { viewerId: str
   }
 
   return <>
+    {result && <ReleaseNotice accountId={viewerId} />}
     {scope === "search" && <>
       <form role="search" className={styles.find} onSubmit={(event) => { event.preventDefault(); search(input); }}>
         <span className={styles.magnifier} aria-hidden="true" />

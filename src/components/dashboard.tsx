@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ReleaseNotice } from "./release-notice";
 import { useEffect, useMemo, useState } from "react";
 import { AppBrand } from "./app-brand";
 import { addStudyDays, shiftMonth, studyDateFromTimestamp } from "@/lib/study-day";
@@ -199,6 +200,7 @@ export function Dashboard({githubAppSlug}:{githubAppSlug:string}){
   {(refreshing||warning)&&<p className="calendar-footnote" role="status">{warning||"최신 기록을 확인하는 중…"}</p>}
   {showInstall&&<section className="install-banner"><div><strong>햄쮸터를 앱처럼 쓰기</strong><p>{iosInstall?"Safari에서 홈 화면에 추가하면 주소창 없이 바로 열립니다.":"홈 화면에 설치하면 다음부터 햄쮸터로 바로 들어올 수 있습니다."}</p></div><div><button className="secondary-button" onClick={()=>void installApp()}>{iosInstall?"설치 방법":"설치"}</button><button className="text-button" onClick={dismissInstall}>나중에</button></div></section>}
   {tab==="calendar"?calendarView:statsView}
+  <ReleaseNotice accountId={viewerId} />
 
   {detailOpen && <DayDetail studyId={study.id} viewerId={viewerId} date={selectedDate} studyDate={data.studyDate}
     day={selectedDay} manual={manual} postponement={data.todayPostponement} onPostpone={confirmPostponement}
