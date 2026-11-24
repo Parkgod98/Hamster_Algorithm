@@ -32,6 +32,7 @@ test("익명 집계가 모바일 성공 p75·실패 수·표본 부족을 따로
   await db.exec("create role service_role; create role anon; create role authenticated");
   await db.exec(await readFile(new URL("../supabase/migrations/202611240010_service_measurements.sql", import.meta.url), "utf8"));
   await db.exec("create table hamster_late_solve_reviews(study_date date)");
+  await db.exec("create table hamster_finalization_cursor(singleton boolean,first_date date)");
   await db.exec(`select hamster_record_action_timing('postpone',true,true,case when x<=23 then 900 else 1900 end)
     from generate_series(1,30) as x;
     select hamster_record_action_timing('postpone',true,false,400);

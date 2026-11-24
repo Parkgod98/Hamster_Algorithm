@@ -27,3 +27,8 @@ select scheduled_day,last_failure_target,last_failure_stage,last_failure_code,la
 from public.hamster_close_attempts where last_failure_at is not null order by scheduled_day desc limit 30;
 select study_date,count(*) as delayed_submissions
 from public.hamster_late_solve_reviews group by study_date order by study_date desc limit 30;
+
+-- The preceding release did not have a durable close cursor. At cutover this
+-- date is a read-only reconciliation item, including promotions around 04:00.
+select first_date - 1 as verify_previous_worker_closed, first_date as first_new_worker_day
+from public.hamster_finalization_cursor where singleton;
