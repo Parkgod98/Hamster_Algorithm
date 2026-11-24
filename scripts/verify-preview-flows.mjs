@@ -124,6 +124,7 @@ async function exercise(phase) {
   console.log("Registration, invite approval, calendar and repeated postponement passed.");
   const snapshot = () => call("/api/sync/changes?once=1", { token: guest.token });
   const before = await snapshot();
+  const manual = { studyId: study, studyDate: day, platform: "BOJ", difficulty: "Silver III", count: 1, requestId: randomUUID() };
   const form = new FormData();
   for (const [k, v] of [["studyId", study], ["date", day], ["goal", "english"]]) form.set(k, v);
   const stream = new AbortController();
@@ -135,23 +136,34 @@ async function exercise(phase) {
     assert.ok(response.ok && response.headers.get("content-type")?.includes("text/event-stream"));
     console.log("Second session is connected to the event stream.");
     const frames = events(response);
-    while (!(await frames.next()).value.startsWith("event: ready\n")) { /* Wait for the subscribed server. */ }
-    console.log("The server's private Realtime channel is subscribed.");
+    const initial = (await frames.next()).value;
+    assert.ok(initial.startsWith("data: "), "Initial calendar revision missing");
+    await call("/api/submissions/manual", { token: owner.token, body: manual });
+    let ready = false, sawManual = false;
+    while (!ready || !sawManual) {
+      const { value: frame } = await frames.next();
+      if (frame.startsWith("event: ready\n")) ready = true;
+      if (frame.startsWith("data: ")) {
+        const changes = JSON.parse(frame.slice(6)).changes.studies[study] ?? [];
+        sawManual ||= changes.some(hint => hint.kind === "submission" && hint.userId === owner.userId);
+      }
+    }
+    console.log("Subscribe-time submission reached the second member; initial journal reconciliation finished.");
     const start = performance.now();
     const completion = await call("/api/goals", { token: owner.token, body: form });
     assert.equal(completion.hasPhoto, false);
     assert.notDeepEqual(await snapshot(), before);
     console.log("English completion reached the committed change journal.");
-    for await (const frame of frames) {
+    let delivered = false;
+    while (!delivered) {
+      const { value: frame } = await frames.next();
       if (!frame.startsWith("data: ")) continue;
       const hints = JSON.parse(frame.slice(6)).changes.studies[study] ?? [];
-      if (hints.some(hint => hint.kind === "goal" && hint.userId === owner.userId && hint.date === day)) break;
+      delivered = hints.some(hint => hint.kind === "goal" && hint.userId === owner.userId && hint.date === day);
     }
     console.log("Second session received English completion over local Supabase Realtime/SSE in " + Math.ceil(performance.now() - start) + "ms.");
   } finally { stream.abort(); }
   assert.notDeepEqual(await snapshot(), before);
-  const manual = { studyId: study, studyDate: day, platform: "BOJ", difficulty: "Silver III", count: 1, requestId: randomUUID() };
-  await call("/api/submissions/manual", { token: owner.token, body: manual });
   assert.equal((await call("/api/submissions/manual", { token: owner.token, body: manual })).duplicate, true);
   assert.equal((await calendar()).study.id, study);
   console.log("HTTP readiness, existing session, login, immutable grades, invite approval, calendar, postponement, English completion, sync and manual retry passed.");
