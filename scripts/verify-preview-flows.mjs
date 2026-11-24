@@ -13,6 +13,19 @@ function loopback(value, port) {
   return url;
 }
 
+async function* events(response) {
+  let buffer = "";
+  for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
+    buffer += chunk;
+    for (let end = buffer.indexOf("\n\n"); end !== -1; end = buffer.indexOf("\n\n")) {
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      yield frame;
+    }
+  }
+  throw new Error("The Realtime event stream closed before the update");
+}
+
 async function configure() {
   const local = JSON.parse(execFileSync("supabase", ["status", "--workdir", process.env.STACK, "-o", "json"]));
   loopback(local.API_URL, "54321");
@@ -111,8 +124,25 @@ async function exercise(phase) {
   const before = await snapshot();
   const form = new FormData();
   for (const [k, v] of [["studyId", study], ["date", day], ["goal", "english"]]) form.set(k, v);
-  const completion = await call("/api/goals", { token: owner.token, body: form });
-  assert.equal(completion.hasPhoto, false);
+  const stream = new AbortController();
+  try {
+    const response = await fetch(new URL("/api/sync/changes", app), {
+      headers: { Authorization: "Bearer " + guest.token },
+      signal: AbortSignal.any([stream.signal, AbortSignal.timeout(20000)]),
+    });
+    assert.ok(response.ok && response.headers.get("content-type")?.includes("text/event-stream"));
+    const frames = events(response);
+    while (!(await frames.next()).value.startsWith("event: ready\n")) { /* Wait for the subscribed server. */ }
+    const start = performance.now();
+    const completion = await call("/api/goals", { token: owner.token, body: form });
+    assert.equal(completion.hasPhoto, false);
+    for await (const frame of frames) {
+      if (!frame.startsWith("data: ")) continue;
+      const hints = JSON.parse(frame.slice(6)).changes.studies[study] ?? [];
+      if (hints.some(hint => hint.kind === "goal" && hint.userId === owner.userId && hint.date === day)) break;
+    }
+    console.log("Second session received English completion over local Supabase Realtime/SSE in " + Math.ceil(performance.now() - start) + "ms.");
+  } finally { stream.abort(); }
   assert.notDeepEqual(await snapshot(), before);
   const manual = { studyId: study, studyDate: day, platform: "BOJ", difficulty: "Silver III", count: 1, requestId: randomUUID() };
   await call("/api/submissions/manual", { token: owner.token, body: manual });
