@@ -94,7 +94,8 @@
 .calendar-member-name { min-width: 0; color: var(--ink); font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
 .calendar-member-status { display: inline-flex; align-items: baseline; gap: 2px; max-width: 100%; }
 .calendar-member-icon { flex: none; font-size: 11px; }
-.calendar-member-label { min-width: 0; font-size: 11px; font-weight: 600; overflow-wrap: anywhere; word-break: keep-all; }
+.calendar-member-label, .ham-day-sheet .state-label { word-break: keep-all; overflow-wrap: normal; }
+.calendar-member-label { font-size: 11px; font-weight: 600; }
 .other-members { font-size: 11px; color: var(--muted); }
 .calendar-caption, .calendar-summary, .calendar-summary div { display: flex; align-items: baseline; gap: 12px; }
 .calendar-caption { justify-content: space-between; flex-wrap: wrap; padding: 12px 2px; }
@@ -187,7 +188,7 @@
   .ham-calendar .mode-month .calendar-member-name { font-size: 12px; }
   .ham-calendar .mode-month .calendar-member-status { display: contents; }
   .ham-calendar .mode-month .calendar-member-icon { margin-inline-start: 1px; font-size: 11px; }
-  .ham-calendar .mode-month .calendar-member-label { display: block; font-size: 11px; overflow-wrap: normal; }
+  .ham-calendar .mode-month .calendar-member-label { display: block; }
   .calendar-caption { display: grid; grid-template-columns: minmax(0,1fr); gap: 5px; padding-inline: 4px; }
   .calendar-summary { margin-block-start: 4px; }
   .ham-day-sheet {
