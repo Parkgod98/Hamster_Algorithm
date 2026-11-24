@@ -3,7 +3,9 @@
 ## 배포 순서
 
 1. 기존 커밋이 있는 체크아웃에서 `node scripts/verify-release-restore.mjs`를 실행한다. 격리 DB에서 구버전의 영어 인증과 사진 조회, 새 기록 보존, 백업 복원을 검증한다.
-2. 머지 전에 Vercel **Production**에 Supabase의 직접 연결 또는 세션 풀러 연결을 설정한다. Supabase 통합에서 공급하는 `POSTGRES_URL_NON_POOLING` 또는 `POSTGRES_URL`이 있으면 사용한다. 직접 지정할 때에는 소유한 햄쮸터 객체를 변경할 수 있는 연결 주소를 `HAMSTER_MIGRATION_DATABASE_URL`에 저장한다. 자격 증명은 Vercel의 비밀 환경 변수 입력란에서 저장한다. 별도 루트 인증서가 필요한 직접 연결은 Supabase 프로젝트의 CA를 `HAMSTER_MIGRATION_CA_CERT`에 설정할 수 있다. 서버는 TLS 서버 인증서와 공개 Supabase 프로젝트 주소가 가리키는 DB를 확인한다. [Supabase 연결 안내](https://supabase.com/docs/guides/database/connecting-to-postgres)
+2. Supabase 조직의 **Integrations → Vercel**에서 기존 Supabase 프로젝트와 햄쮸터 Vercel 프로젝트를 연결하고, DB 연결 정보 동기화 대상으로 **Production**만 선택한다. 배포 실행기는 통합이 공급한 `POSTGRES_URL_NON_POOLING`, `POSTGRES_URL` 순으로 연결 주소를 찾는다. 직접 지정한 운영 비밀 변수 `HAMSTER_MIGRATION_DATABASE_URL`이 있으면 그 주소가 우선한다. [Supabase 연결 안내](https://supabase.com/docs/guides/database/connecting-to-postgres)
+
+   연결에 쓰는 인증 기관(CA) 인증서는 Supabase 프로젝트 **Database → Settings**의 SSL 설정에서 내려받는다. Vercel 프로젝트의 **Production** 환경 변수 `HAMSTER_MIGRATION_CA_CERT`에 인증서의 시작·종료 줄을 포함한 PEM 전체를 저장한다. 실제 줄바꿈과 리터럴 `\n`을 모두 지원한다. 저장 후 새로 시작한 빌드가 값을 읽고 DB 서버 인증서와 호스트 이름을 검증한다.
 3. `main` 머지로 시작하는 운영 빌드는 앱을 먼저 빌드한다. 성공하면 `202611230008`까지 운영하던 스키마를 확인하고 그 이후의 새 SQL 파일과 체크섬을 **한 트랜잭션**으로 적용한다. 첫 변경은 기존 풀이에 그때까지 표시되던 등급을 복사한다. 초대 신규 가입은 커밋 시점부터 승인을 거친다. 기존 계정·세션·확정 벌금은 보존된다. SQL 실패 시 해당 트랜잭션 전체가 취소된다. Vercel은 마지막으로 REST 스키마, 인증 설정, 적용 이력을 읽어 확인한 뒤 새 앱을 배포한다. 배포 실패 시 이전 앱이 계속 요청을 처리한다. 커밋 직후 연결 점검만 실패한 경우, 같은 커밋을 다시 배포하면 저장된 이력을 읽어 SQL 재적용을 건너뛴다.
 
    프리뷰 빌드는 운영 DDL을 실행하지 않는다. DB가 분리된 격리 시험은 `HAMSTER_TEST_DATABASE_URL`에 loopback 연결만 받아 `node scripts/migrate-release.mjs --local`로 같은 SQL과 실행기를 검증한다. Vercel Preview와 Production 각각의 읽기 확인 기준은 `/api/health?mode=ready`의 HTTP 200이다. `HAMSTER_EXPECTED_SUPABASE_HOST`에는 팀이 확인한 프로젝트 호스트를 별도로 지정할 수 있다. 운영용 DDL을 포함한 릴리스는 `main` 운영 빌드를 거쳐 배포한다.
@@ -11,6 +13,8 @@
 5. 조회 최적화 기본 설정은 `HAMSTER_PROGRESS_MODE=off`다. 적용할 스터디 ID를 `HAMSTER_PROGRESS_STUDIES`에 지정하고 `shadow`에서 기존·새 계산을 병행한다. 달력·미루기 결과가 일치하는지 확인한 뒤 같은 스터디에 `on`을 적용한다. 과거 자료 변경이나 첫 준비 때는 원본을 다시 읽는다. 과거 월에는 뒤늦은 보충 반영을 위해 그 달 이후의 기록도 필요하다.
 
 ## 장애 대응
+
+배포 로그에서 `Database migration connection failed`는 DB 트랜잭션이 열리기 전의 실패다. `SELF_SIGNED_CERT_IN_CHAIN` 또는 `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`이면 해당 프로젝트의 CA와 Production 변수 범위를 확인한다. `Database migration transaction failed`는 트랜잭션 시작 뒤 발생한 오류다. 특정 파일에서 실패하면 파일명과 오류 코드도 표시된다. 연결 정보와 SQL 원문은 기록하지 않는다.
 
 첫 운영 전환일에는 `scripts/report-service.sql`이 이전 작업이 마지막으로 마감해야 했던 날짜도 보여준다. 04:00 직후 전환은 직전 버전의 04:05 마감과 겹칠 수 있어 해당 날짜의 실행 결과를 확인한다. 차이가 있으면 금액을 변경하기 전에 비교표를 검토한다.
 
