@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { GOAL_LABELS, type StudyRuleConfig } from "@/lib/rules";
+import { GOAL_LABELS, goalInstructions, isManualGoal, type StudyRuleConfig } from "@/lib/rules";
 import { browserSupabase } from "@/lib/supabase-browser";
 import { GoalPolicyFields } from "./study-goal-fields";
 import s from "./study-settings.module.css";
@@ -132,12 +132,12 @@ export function StudyRuleEditor({ study, onChanged }: { study: SettingsStudy; on
             <p className={s.goalSummary}>{goals.allowed.length === 1 ? GOAL_LABELS[goals.allowed[0]] + " 완료" :
               goals.mode === "all" ? "모든 목표 완료" : "목표 " + goals.allowed.length + "개 중 " + goals.required + "개 완료"}</p>
             {goals.allowed.length > 1 && <p className={s.allowedGoals}>{goals.allowed.map(goal => GOAL_LABELS[goal]).join(" · ")}</p>}
-            {goals.allowed.includes("english") && <div className={s.englishRule}><strong>영어 공부 규칙</strong>
-              <p>{goals.englishRule || "등록된 영어 규칙이 없어요."}</p></div>}
+            {goals.allowed.filter(isManualGoal).map(goal => <div key={goal} className={s.englishRule}><strong>{GOAL_LABELS[goal]} 규칙</strong>
+              <p>{goalInstructions(goals, goal) || "등록된 규칙이 없어요."}</p></div>)}
           </>}
         </div>
         <div className={s.ruleList}>
-          {(editing || goals.allowed.includes("algorithm")) && <RuleDetails title="알고리즘 난이도별 문제 수">
+          {goals.allowed.includes("algorithm") && <RuleDetails title="알고리즘 난이도별 문제 수">
             {platforms.map(platform => <div key={platform.name} className={s.platformGroup}>
               <h4>{platform.name}</h4>
               {platform.tiers.map(([tier, key]) => <Quantity key={key} label={tier} value={config[key]} min={1} max={20} unit="문제"

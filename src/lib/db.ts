@@ -1,4 +1,11 @@
 export const DB = {
+  actionTimings: "hamster_action_timings",
+  closeAttempts: "hamster_close_attempts",
+  manualReceipts: "hamster_manual_receipts",
+  manualGoals: "hamster_manual_goals",
+  progressCheckpoints: "hamster_progress_checkpoints",
+  syncHeads: "hamster_sync_heads",
+  finalizationCursor: "hamster_finalization_cursor",
   accountCredentials: "hamster_account_credentials",
   accountSessions: "hamster_account_sessions",
   goalCompletions: "hamster_goal_completions",
@@ -21,6 +28,15 @@ export const DB = {
 } as const;
 
 export const RPC = {
+  joinRequiresApproval: "hamster_join_requires_approval",
+  recordTiming: "hamster_record_action_timing",
+  readProgressCheckpoints: "hamster_read_progress_checkpoints",
+  saveProgressCheckpoints: "hamster_save_progress_checkpoints",
+  guardedPostponement: "hamster_guarded_postponement",
+  recordManualBatch: "hamster_record_manual_batch",
+  nextFinalizationDay: "hamster_next_finalization_day",
+  activateFinalization: "hamster_activate_finalization",
+  finishFinalizationDay: "hamster_finish_finalization_day",
   scheduleStudyRules: "hamster_schedule_study_rules",
   recordGoal: "hamster_record_goal",
   communityCatalog: "hamster_community_catalog",

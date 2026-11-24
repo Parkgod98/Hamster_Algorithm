@@ -24,6 +24,18 @@ type Obligation = {
 
 type CreditLot = { earnedOn: string; credit: number };
 
+// Consecutive untouched obligations with the same policy share one range.
+// A member who misses a year still needs that FIFO debt when returning.
+type OpenRange = {
+  from: string; to: string; policy: DayPolicy; credits: number; goals: StudyGoal[]; latest: string;
+};
+export type TimelineCheckpoint = { version: 1; through: string; open: OpenRange[]; carry: CreditLot[] };
+export type TimelineResume = {
+  initial?: TimelineCheckpoint;
+  captureDate?: string;
+  capture?: (checkpoint: TimelineCheckpoint) => void;
+};
+
 const EPSILON = 1e-9;
 
 export function evaluateTimeline(days: TimelineDay[], currentDate: string, maxCarryDays = 2): TimelineResult[] {
@@ -36,6 +48,7 @@ export function evaluateTimelineByDay(
   maxCarryDaysForDate: (date: string) => number,
   policyForDate: (date: string) => DayPolicy = () => ({ allowed: ["algorithm"], required: 1 }),
   completions: DatedCompletion[] = [],
+  resume?: TimelineResume,
 ): TimelineResult[] {
   const ordered = [...days].sort((a, b) => a.date.localeCompare(b.date));
   const algorithmQueue: Obligation[] = [];
@@ -48,10 +61,26 @@ export function evaluateTimelineByDay(
     group.push(completion);
     actions.set(applies, group);
   }
-  const carryLots: CreditLot[] = [];
+  const carryLots: CreditLot[] = resume?.initial?.carry.map(lot => ({ ...lot })) ?? [];
   const results: TimelineResult[] = [];
   let oldestUnresolvedIndex = 0;
   let backlogCount = 0;
+
+  if (resume?.initial) {
+    const checkpoint = resume.initial;
+    if (checkpoint.version !== 1 || (ordered.length && checkpoint.through >= ordered[0].date))
+      throw new Error("Incompatible progress checkpoint");
+    for (const range of checkpoint.open) {
+      for (const date of dateRange(range.from, range.to)) {
+        const result: TimelineResult = { date, state: "missed", available: 0, remaining: 1, backlogCount: 0,
+          resolvedOn: null, algorithmCredits: range.credits, completedGoals: [...range.goals] };
+        const obligation = { policy: range.policy, result, latestContribution: range.latest };
+        byDate.set(date, obligation);
+        if (range.policy.allowed.includes("algorithm") && range.credits < 1) algorithmQueue.push(obligation);
+        backlogCount++;
+      }
+    }
+  }
 
   const update = (obligation: Obligation, earnedOn: string) => {
     const { result, policy } = obligation;
@@ -146,6 +175,23 @@ export function evaluateTimelineByDay(
 
     cleanupCarry(carryLots);
     result.backlogCount = backlogCount;
+    if (day.date === resume?.captureDate && resume.capture) {
+      const open: OpenRange[] = [];
+      for (const [date, item] of byDate) {
+        if (item.result.state === "complete") continue;
+        const { algorithmCredits: credits, completedGoals: goals } = item.result;
+        const prior = open.at(-1);
+        if (prior && !goals.length && !prior.goals.length && credits === 0 && prior.credits === 0
+          && !item.latestContribution && !prior.latest && prior.policy.required === item.policy.required
+          && prior.policy.allowed.join() === item.policy.allowed.join() && dayDistance(prior.to, date) === 1) {
+          prior.to = date;
+        } else {
+          open.push({ from: date, to: date, policy: { allowed: [...item.policy.allowed], required: item.policy.required },
+            credits, goals: [...goals], latest: item.latestContribution });
+        }
+      }
+      resume.capture({ version: 1, through: day.date, open, carry: carryLots.map(lot => ({ ...lot })) });
+    }
   }
 
   return results;

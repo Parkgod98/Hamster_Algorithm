@@ -15,7 +15,7 @@ const TABLE = {
 };
 
 /** Real route, context loader and engine. Only Auth and Supabase I/O are doubles. No production access. */
-export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
+export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000, transformSource, variables = {}, browser } = {}) {
   let clock = Date.parse(`${joined}T22:00:00+09:00`);
   let sequence = 0;
   const state = {
@@ -73,7 +73,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
         for (const row of state.rows[TABLE.submissions]) {
           const date = new Date(Date.parse(row.solved_at) + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
           const item = {study_id:row.study_id,user_id:row.user_id,study_date:date,
-            platform:row.hamster_problems.platform,difficulty:row.hamster_problems.difficulty};
+            platform:row.hamster_problems.platform,difficulty:row.earned_difficulty};
           const key = JSON.stringify(item);
           const existing = grouped.get(key);
           if (existing) { existing.solves += 1; if (row.solved_at > existing.solved_through) existing.solved_through = row.solved_at; }
@@ -110,14 +110,20 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
   function load(filename) {
     const absolute = path.resolve(root, filename);
     if (modules.has(absolute)) return modules.get(absolute).exports;
-    const source = fs.readFileSync(absolute, "utf8");
+    const original = fs.readFileSync(absolute, "utf8");
+    const source = transformSource?.(path.relative(root, absolute).split(path.sep).join("/"), original) ?? original;
     const compiled = ts.transpileModule(source, { fileName: absolute, compilerOptions: {
       module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
     } }).outputText;
     const loadedModule = { exports: {} };
     modules.set(absolute, loadedModule);
     const scopedRequire = (name) => {
+      if (name.endsWith(".css")) return {};
       if (name === "@/lib/supabase") return auth;
+      if (browser && name === "./supabase-browser") return {
+        browserSupabase: () => ({ auth: { getSession: async () => ({ data: { session: browser.session } }) } }),
+        forgetAccountSession: () => false,
+      };
       if (name === "@/lib/supabase-browser") return { browserSupabase: () => { throw new Error("Browser I/O in server test"); } };
       if (name.startsWith("@/") || name.startsWith(".")) {
         const base = name.startsWith("@/") ? path.join(root, "src", name.slice(2)) : path.resolve(path.dirname(absolute), name);
@@ -129,6 +135,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
     };
     new vm.Script(`(function(exports, require, module) { ${compiled}\n})`, { filename: absolute }).runInNewContext({
       Date: TestDate, Error, Request, Response, Headers, URL, URLSearchParams, console, setTimeout, clearTimeout,
+      process: { env: variables }, ...browser?.globals,
     })(loadedModule.exports, scopedRequire, loadedModule);
     return loadedModule.exports;
   }
@@ -147,7 +154,7 @@ export function runtime({ limit = 2, joined = "2026-09-15", cap = 1000 } = {}) {
     setReadHook(fn) { state.onRead = fn; },
     solve(date, difficulty = "Gold V", user = "alice") {
       state.rows[TABLE.submissions].push({ id: `sub-${String(++sequence).padStart(8, "0")}`, study_id: "study", user_id: user,
-        solved_at: new Date(`${date}T12:00:00+09:00`).toISOString(), source: "manual",
+        solved_at: new Date(`${date}T12:00:00+09:00`).toISOString(), source: "manual", earned_difficulty: difficulty,
         hamster_problems: { platform: "BOJ", difficulty, external_id: `${sequence}`, title: "테스트 문제" } });
     },
     postpone(date) { state.rows[TABLE.postponements].push({ id: `post-${++sequence}`, study_id: "study", user_id: "alice",

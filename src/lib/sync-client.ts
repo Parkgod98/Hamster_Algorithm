@@ -1,4 +1,4 @@
-import { resumeCheckMs, clearViewer, invalidateViews, notifyViews, setViewsConnected, waitForViewCheck } from "./view-cache";
+import { resumeCheckMs, clearViewer, invalidateViews, notifyViews, setViewsConnected, waitForViewCheck, acceptFirstCalendarSnapshot } from "./view-cache";
 import { changedViews } from "./view-changes";
 import type { SyncSnapshot } from "./sync-stream";
 import { refreshMemberCalendars } from "./member-calendar-refresh";
@@ -63,9 +63,10 @@ export function syncAccount(session: AppSession) {
       const { prefixes, members } = changedViews(previous, snapshot);
       invalidateViews(viewer, prefixes);
       for (const [study, users] of members) for (const user of users) void refreshMemberCalendars(viewer, study, user);
-    } else if (bootstrapFallback) {
-      // A first read completed while the baseline was inaccessible. Reconcile once.
-      invalidateViews(viewer, [""]);
+    } else {
+      // An authenticated cold calendar may finish before the stream opens.
+      // Its read revision avoids repeating an unchanged first query.
+      acceptFirstCalendarSnapshot(viewer, snapshot.studies, bootstrapFallback);
     }
     previous = snapshot;
   }
@@ -74,7 +75,7 @@ export function syncAccount(session: AppSession) {
     if (stopped || controller || !visible() || !navigator.onLine) return;
     const active = new AbortController();
     controller = active;
-    const release = checkBeforeReads ? waitForViewCheck(viewer) : () => {};
+    const release = checkBeforeReads ? waitForViewCheck(viewer, !previous) : () => {};
     // Private reads can still reach their normal, authenticated endpoints during an outage.
     let seen = false, live = false;
     let watchdog: ReturnType<typeof setTimeout>;

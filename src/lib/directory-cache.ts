@@ -11,7 +11,15 @@ export function directoryKey(scope: DirectoryScope, query: string, offset: numbe
 }
 
 export function knownEmptyDirectory(viewerId: string) {
-  return peekView<StudyList>(viewerId, directoryKey("mine", "", 0))?.studies.length === 0;
+  const firstPage = peekView<StudyList>(viewerId, directoryKey("mine", "", 0));
+  if (firstPage) return firstPage.nextOffset === null && firstPage.studies.every(study => !study.memberRole);
+  return peekView(viewerId, "directory:mine:no-membership") === true;
+}
+
+// A calendar without a membership says nothing about outstanding applications.
+export function rememberNoMembership(viewerId: string) {
+  putView(viewerId, "directory:mine:no-membership", true);
+  if (!peekView(viewerId, "browse-tab")) putView(viewerId, "browse-tab", "mine");
 }
 
 export function rememberEmptyDirectory(viewerId: string) {

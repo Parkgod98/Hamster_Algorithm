@@ -13,14 +13,36 @@ const watchers = new Set<Watch>();
 let connected = false;
 let lastContact = 0;
 let sequence = 0;
-let gate: { viewer: string; wait: Promise<void>; release: () => void; cancelled: boolean } | undefined;
+let gate: { viewer: string; wait: Promise<void>; release: () => void; cancelled: boolean; coldCalendars: boolean } | undefined;
+const firstSnapshots = new Map<string, Record<string, string>>();
 
-export function waitForViewCheck(viewer: string) {
+type CalendarStamp = { study: { id: string } | null; readRevision?: string | null };
+export function needsCalendarStamp(viewer: string) { return !firstSnapshots.has(viewer); }
+export function staleColdCalendar(viewer: string, data: CalendarStamp) {
+  const baseline = firstSnapshots.get(viewer);
+  if (!baseline) return false;
+  if (!data.study) return Object.keys(baseline).length > 0;
+  const rev = baseline[data.study.id];
+  return rev === undefined || !data.readRevision || BigInt(data.readRevision) < BigInt(rev);
+}
+
+export function acceptFirstCalendarSnapshot(viewer: string, studies: Record<string, string>, recheckOthers = false) {
+  firstSnapshots.set(viewer, studies);
+  const stale = Array.from(entries.values()).filter(e => e.viewer === viewer && e.key.startsWith("calendar:") &&
+    staleColdCalendar(viewer, e.data as CalendarStamp)).map(e => e.key);
+  if (recheckOthers) {
+    for (const item of [...entries.values(), ...flights.values()])
+      if (item.viewer === viewer && !item.key.startsWith("calendar:")) stale.push(item.key);
+  }
+  invalidateViews(viewer, stale);
+}
+
+export function waitForViewCheck(viewer: string, coldCalendars = false) {
   gate?.release();
   let done!: () => void;
   const wait = new Promise<void>(resolve => { done = resolve; });
   const release = () => { if (gate?.wait === wait) gate = undefined; done(); };
-  gate = { viewer, wait, release, cancelled: false };
+  gate = { viewer, wait, release, cancelled: false, coldCalendars };
   return release;
 }
 
@@ -67,10 +89,13 @@ export function listViewKeys(viewer: string, prefix: string) {
 
 export function readView<T>(viewer: string, key: string, load: (signal: AbortSignal) => Promise<T>, options: Options = {}): Promise<T> {
   const pendingCheck = gate;
-  if (pendingCheck?.viewer === viewer) return pendingCheck.wait.then(() => {
-    if (pendingCheck.cancelled) throw new DOMException('Session changed', 'AbortError');
-    return readView(viewer, key, load, options);
-  });
+  const earlyCalendar = pendingCheck?.coldCalendars && key.startsWith("calendar:") && !entries.has(id(viewer, key));
+  if (pendingCheck?.viewer === viewer && !earlyCalendar) {
+    return pendingCheck.wait.then(() => {
+      if (pendingCheck.cancelled) throw new DOMException('Session changed', 'AbortError');
+      return readView(viewer, key, load, options);
+    });
+  }
   const hit = peekView<T>(viewer, key);
   if (hit !== undefined) return Promise.resolve(hit);
   const k = id(viewer, key);
@@ -127,6 +152,7 @@ export function setViewsConnected(value: boolean) {
 }
 
 export function clearViewer(viewer: string, notify = true) {
+  firstSnapshots.delete(viewer);
   if (gate?.viewer === viewer) { gate.cancelled = true; gate.release(); }
   connected = false; lastContact = 0;
   if (notify) invalidateViews(viewer, ['']);

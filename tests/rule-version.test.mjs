@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeRuleVersions, rulesForDate } from "../src/lib/rule-version.ts";
+import { goalsInPeriod, normalizeRuleVersions, rulesForDate } from "../src/lib/rule-version.ts";
 import { DEFAULT_RULE_CONFIG, normalizeRuleConfig } from "../src/lib/rules.ts";
 
 const initial = {
@@ -11,6 +11,15 @@ const initial = {
   maxConsecutivePostpone: 2,
   maxPresolveDays: 2,
 };
+
+test("월별 통계는 기간 내에 실제로 허용된 목표만 사용한다", () => {
+  const history = [initial, { ...initial, effectiveFrom: "2026-09-18", ruleConfig: { ...DEFAULT_RULE_CONFIG,
+    goals: { ...DEFAULT_RULE_CONFIG.goals, allowed: ["english"] } } }];
+  assert.deepEqual(goalsInPeriod(history, "2026-08-01", "2026-08-31"), []);
+  assert.deepEqual(goalsInPeriod(history, "2026-09-01", "2026-09-17"), ["algorithm"]);
+  assert.deepEqual(goalsInPeriod(history, "2026-09-01", "2026-09-30"), ["algorithm", "english"]);
+  assert.deepEqual(goalsInPeriod(history, "2026-10-01", "2026-10-31"), ["english"]);
+});
 
 test("규칙 변경일 이전 날짜는 이전 규칙을 유지한다", () => {
   const versions = normalizeRuleVersions([

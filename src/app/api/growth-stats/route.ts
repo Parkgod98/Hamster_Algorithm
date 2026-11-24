@@ -7,8 +7,8 @@ import { createAdminClient, requireUser } from "@/lib/supabase";
 import type { Platform } from "@/lib/types";
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
-type ProblemRelation = { platform: Platform; difficulty: string };
-type SubmissionRow = { solved_at: string; hamster_problems: unknown };
+type ProblemRelation = { platform: Platform };
+type SubmissionRow = { solved_at: string; earned_difficulty: string; hamster_problems: unknown };
 
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -50,7 +50,7 @@ export async function GET(request: Request) {
     const rangeStart = studyDayStartTimestamp(`${shiftMonth(month, -2)}-01`);
     const rangeEndExclusive = studyDayStartTimestamp(`${shiftMonth(month, 1)}-01`);
     const submissions = await readAllRows<SubmissionRow>((from, to) => admin.from(DB.submissions)
-      .select("solved_at,hamster_problems(platform,difficulty)")
+      .select("solved_at,earned_difficulty,hamster_problems(platform)")
       .eq("study_id", membership.study_id).eq("user_id", targetUserId)
       .gte("solved_at", rangeStart).lt("solved_at", rangeEndExclusive)
       .order("solved_at", { ascending: true }).order("id", { ascending: true }).range(from, to));
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     for (const submission of submissions) {
       const problem = problemFromRelation(submission.hamster_problems);
       if (!problem) throw new Error("Submission problem missing");
-      rows.push({ studyDate: studyDateFromTimestamp(submission.solved_at), platform: problem.platform, difficulty: problem.difficulty });
+      rows.push({ studyDate: studyDateFromTimestamp(submission.solved_at), platform: problem.platform, difficulty: submission.earned_difficulty });
     }
     return json({ report: buildGrowthReport(rows, month, currentStudyDate) });
   } catch (error) {

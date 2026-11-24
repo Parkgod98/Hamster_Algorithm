@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
-import { normalizeRuleConfig, submissionCredit } from "../src/lib/rules.ts";
+import { GOAL_KEYS, isManualGoal, normalizeRuleConfig, submissionCredit } from "../src/lib/rules.ts";
 import { normalizeRuleVersions, rulesForDate } from "../src/lib/rule-version.ts";
 
 const migrations = new URL("../supabase/migrations/", import.meta.url);
@@ -129,5 +129,26 @@ test("개설·변경·기존 이력 복구를 실제 PostgreSQL에서 검증한�
       '2026-10-10T13:00:00+09:00']::timestamptz[]) ts`, [study.id, adminId, problem.id]);
     const counts = await db.query("select solves from hamster_daily_solution_counts where study_id=$1 order by solved_through", [study.id]);
     assert.deepEqual(counts.rows.map((row) => row.solves), [2,1]);
+
+    await db.exec(await migrationSQL("202611240005_manual_goal_registry.sql"));
+    const registry = await db.query("select goal from hamster_manual_goals order by goal");
+    assert.deepEqual(registry.rows.map(row => row.goal), GOAL_KEYS.filter(isManualGoal).sort());
+    assert.equal((await save(adminId, 2)).rows[0].id, first[0].id);
+    assert.equal((await db.query("select count(*)::int as n from hamster_goal_photos")).rows[0].n, 1);
+    const testPolicy = { ...policy, allowed: ["reading", "exercise"], required: 2, instructions: { exercise: "20분 걷기" } };
+    const { rows: [mixed] } = await db.query(
+      "insert into hamster_studies (name,created_by,rule_config) values ('확장 검증',$1,$2) returning id",
+      [adminId, JSON.stringify({ ...normalizeRuleConfig({}), goals: testPolicy })]);
+    await db.query("insert into hamster_study_members(study_id,user_id,display_name) values ($1,$2,'공부중')", [mixed.id, adminId]);
+    const certify = (goal, user = adminId) => db.query(
+      `select hamster_record_goal($1,$2,${today},$3) as id`, [mixed.id, user, goal]);
+    await assert.rejects(certify("exercise"), e => e.message === "goal_unavailable");
+    await db.query("insert into hamster_manual_goals values ('exercise')");
+    await assert.rejects(certify("english"), e => e.message === "goal_unavailable");
+    await assert.rejects(certify("exercise", memberId), e => e.code === "42501");
+    const exercise = await certify("exercise");
+    assert.equal((await certify("exercise")).rows[0].id, exercise.rows[0].id);
+    await certify("reading");
+    assert.equal((await db.query("select count(*)::int as n from hamster_goal_completions where study_id=$1", [mixed.id])).rows[0].n, 2);
   });
 });

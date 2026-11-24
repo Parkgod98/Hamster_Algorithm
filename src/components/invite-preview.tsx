@@ -54,17 +54,19 @@ function InvitedStudy({ code }: { code: string }) {
       if (result.status === "joined") router.replace(studyPath(result.studyId));
       else if (study) {
         const pending = { ...study, pending: true };
+        putView(viewerId, "browse-tab", "mine");
         putView(viewerId, key, { studies: [pending], nextOffset: null }, { ttlMs: 30_000 });
+        setResolved({ revision, resume, study: pending });
       }
     } catch (cause) { setMessage(communityMessage(cause)); }
     finally { setBusy(false); }
   }
-  const pending = study?.pending && study?.joinPolicy === "approval";
+  const pending = study?.pending === true;
   return <>
     {message && <p role="alert" className={styles.error}>{message}</p>}
     {study ? <StudyCard study={study}>
       <button className={styles.primary} disabled={busy || pending} onClick={() => void join()}>
-        {busy ? "처리 중…" : pending ? "승인 대기 중" : study.joinPolicy === "open" ? "스터디 가입" : "가입 신청"}</button>
+        {busy ? "처리 중…" : pending ? "승인 대기 중" : "가입 신청"}</button>
     </StudyCard> : !message && <p role="status" className={styles.status}>초대를 확인하고 있어요…</p>}
   </>;
 }

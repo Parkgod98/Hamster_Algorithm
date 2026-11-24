@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { DB } from "@/lib/db";
+import { DB, RPC } from "@/lib/db";
 import { getPostponementStatus, type PostponementStatus } from "@/lib/postponement-status";
-import { evaluateMemberProgress, loadStudyProgressContext } from "@/lib/server-progress";
-import { rulesForDate } from "@/lib/rule-version";
+import { ProgressChanged, readCheckpointRollout, readProgressWindow, readWindowRules } from "@/lib/progress-window";
+import { normalizeRuleConfig } from "@/lib/rules";
+import { normalizeRuleVersions, rulesForDate } from "@/lib/rule-version";
 import { createAdminClient, requireUser } from "@/lib/supabase";
-import { studyDateFromTimestamp } from "@/lib/study-day";
+import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -14,7 +15,8 @@ function validStudyId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128;
 }
 
-async function handle(request: Request, write: boolean) {
+async function handle(request: Request, write: boolean, retried = false): Promise<Response> {
+  const retry = !retried && write ? request.clone() : request;
   try {
     const user = await requireUser(request);
     let input: { studyId?: unknown; studyDate?: unknown };
@@ -38,17 +40,30 @@ async function handle(request: Request, write: boolean) {
       return json({ error: "인증일이 바뀌었어요. 달력을 새로고침해주세요.", code: "study-day-changed", studyDate: current }, 409);
     }
     const admin = createAdminClient();
-    const context = await loadStudyProgressContext(admin, input.studyId, current, [user.id]);
-    if (!context || !context.members.has(user.id)) return json({ error: "forbidden" }, 403);
-    const rules = rulesForDate(context.versions, current);
-    const progress = evaluateMemberProgress(context, user.id, current);
+    const rollout = await readCheckpointRollout(admin, input.studyId, user.id, current, current);
+    if (retried && write && !rollout) throw new ProgressChanged("Revision check unavailable");
+    const [study, membership] = await Promise.all([
+      admin.from(DB.studies).select("id").eq("id", input.studyId).maybeSingle(),
+      admin.from(DB.studyMembers).select("user_id,joined_at")
+        .eq("study_id", input.studyId).eq("user_id", user.id).maybeSingle(),
+    ]);
+    if (study.error) throw study.error;
+    if (membership.error) throw membership.error;
+    if (!study.data || !membership.data) return json({ error: "forbidden" }, 403);
+    const {rows} = await readWindowRules(admin, input.studyId, current, rollout);
+    const versions = normalizeRuleVersions(rows, normalizeRuleConfig);
+    const rules = rulesForDate(versions, current);
+    const windows = await readProgressWindow({ db: admin, study: input.studyId, members: [membership.data],
+      versions, today: current, end: current, single: user.id, asOf: studyDayEndExclusiveTimestamp(current) }, rollout);
+    const window = windows.get(user.id)!;
+    const progress = window.dates.get(current) ?? null;
     const makeStatus = (): PostponementStatus => getPostponementStatus({
       studyDate: current,
       now: new Date().toISOString(),
       limit: rules.maxConsecutivePostpone,
       deadlineHour: rules.postponeDeadlineHour,
       deadlineMinute: rules.postponeDeadlineMinute,
-      alreadyPostponed: context.postponementsByUser.get(user.id)?.has(current) ?? false,
+      alreadyPostponed: window.postponed.has(current),
       progress,
     });
 
@@ -67,16 +82,29 @@ async function handle(request: Request, write: boolean) {
     }
 
     // Never accept client-provided counts, flags or limits. Only this server decision permits INSERT.
-    const { error } = await admin.from(DB.postponements).insert({ study_id: input.studyId, user_id: user.id, study_date: current });
-    if (error && error.code !== "23505") {
-      console.error("postponement insert failed", { code: error.code });
-      return json({ error: "미루기를 저장하지 못했어요. 잠시 후 다시 확인해주세요." }, 503);
+    let duplicate: boolean;
+    if (rollout) {
+      const { data, error } = await admin.rpc(RPC.guardedPostponement, {
+        p_study: input.studyId, p_user: user.id, p_day: current, p_revision: rollout.revision, p_deadline: status.deadlineAt,
+      });
+      if (error) throw error;
+      if (data === "changed") throw new ProgressChanged("Progress changed before save");
+      if (data !== "saved" && data !== "duplicate") throw new Error("Unconfirmed postponement");
+      duplicate = data === "duplicate";
+    } else {
+      const { error } = await admin.from(DB.postponements).insert({ study_id: input.studyId, user_id: user.id, study_date: current });
+      if (error && error.code !== "23505") {
+        console.error("postponement insert failed", { code: error.code });
+        return json({ error: "미루기를 저장하지 못했어요. 잠시 후 다시 확인해주세요." }, 503);
+      }
+      duplicate = error?.code === "23505";
     }
     const savedStatus: PostponementStatus = { ...status, canPostpone: false, alreadyPostponed: true,
       reason: "already-postponed", message: "이미 오늘 미루기를 신청했어요." };
-    return json({ ok: true, duplicate: error?.code === "23505", studyDate: current,
+    return json({ ok: true, duplicate, studyDate: current,
       backlogCount: status.backlogCount, status: savedStatus });
   } catch (error) {
+    if (error instanceof ProgressChanged && !retried) return handle(retry, write, true);
     if (error instanceof Error && error.message === "UNAUTHORIZED") return json({ error: "unauthorized" }, 401);
     console.error("postponement status unavailable");
     return json({ error: "진행 상태를 확인하지 못했어요. 잠시 후 다시 확인해주세요.", code: "unavailable" }, 503);

@@ -1,4 +1,4 @@
-import type { StudyRuleConfig } from "./rules";
+import type { StudyGoal, StudyRuleConfig } from "./rules";
 
 export type RuleVersionRow = {
   effective_from: string;
@@ -34,6 +34,17 @@ export function normalizeRuleVersions(
       maxPresolveDays: row.max_presolve_days,
     }))
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+}
+
+export function goalsInPeriod(versions: EffectiveRules[], start: string, end: string): StudyGoal[] {
+  const allowed = new Set<StudyGoal>();
+  if (end < start) return [];
+  for (const [i, version] of versions.entries()) {
+    if (version.effectiveFrom > end) break;
+    if (versions[i + 1] && versions[i + 1].effectiveFrom <= start) continue;
+    for (const goal of version.ruleConfig.goals.allowed) allowed.add(goal);
+  }
+  return [...allowed];
 }
 
 export function rulesForDate(versions: EffectiveRules[], date: string): EffectiveRules {

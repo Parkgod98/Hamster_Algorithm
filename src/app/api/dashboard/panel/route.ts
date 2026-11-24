@@ -8,7 +8,7 @@ import { normalizeRuleConfig, submissionCredit, goalPolicy } from "@/lib/rules";
 import type { Platform } from "@/lib/types";
 
 type Problem = { platform: Platform; external_id: string; title: string; difficulty: string };
-type Solve = { user_id: string; solved_at: string; source: string; hamster_problems: unknown };
+type Solve = { user_id: string; solved_at: string; source: string; earned_difficulty: string; hamster_problems: unknown };
 type Penalty = { user_id: string; study_date: string; amount: number };
 type Version = { effective_from: string; changed_by: string | null; created_at: string };
 
@@ -56,15 +56,15 @@ export async function GET(request: Request) {
     const algorithm = Boolean(rule && goalPolicy(rule.rule_config).allowed.includes("algorithm"));
     const [goals, submissions] = await Promise.all([
       dayGoals(db, studyId, date, user.id, member.data.joined_at, rule, true),
-      algorithm ? readAllRows<Solve>((from,to) => db.from(DB.submissions).select("user_id,solved_at,source,hamster_problems(platform,external_id,title,difficulty)")
+      algorithm ? readAllRows<Solve>((from,to) => db.from(DB.submissions).select("user_id,solved_at,source,earned_difficulty,hamster_problems(platform,external_id,title)")
         .eq("study_id", studyId).gte("solved_at",studyDayStartTimestamp(date)).lt("solved_at",studyDayEndExclusiveTimestamp(date))
         .order("solved_at").order("id").range(from,to)) : [],
     ]);
     const config = normalizeRuleConfig(rule?.rule_config);
     const details = submissions.map(row => {
       const p = (Array.isArray(row.hamster_problems) ? row.hamster_problems[0] : row.hamster_problems) as Problem;
-      return { userId: row.user_id, platform:p.platform, problemId:p.external_id, title:p.title, difficulty:p.difficulty,
-        credit:submissionCredit(p.platform,p.difficulty,config), solvedAt:row.solved_at, source:row.source };
+      return { userId: row.user_id, platform:p.platform, problemId:p.external_id, title:p.title, difficulty:row.earned_difficulty,
+        credit:submissionCredit(p.platform,row.earned_difficulty,config), solvedAt:row.solved_at, source:row.source };
     });
     return json({ penalties: penaltyRows, submissions: details, algorithm, goals });
   } catch (error) {

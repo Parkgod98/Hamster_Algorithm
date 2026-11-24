@@ -43,6 +43,7 @@ for (const cap of [1000, 100]) {
       env.solve("2026-10-15");
       const row = env.rows[env.table.submissions].at(-1);
       row.source = "github";
+      row.earned_difficulty = "Level 2";
       row.hamster_problems = { platform: "PROGRAMMERS", difficulty: "Level 2", external_id: problemId, title: problemId };
     }
     const result = await calendar(env);

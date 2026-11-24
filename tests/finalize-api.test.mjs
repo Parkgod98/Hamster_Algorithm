@@ -2,6 +2,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runtime} from './helpers/finalize-runtime.mjs';
 
+test("전환 시 열린 인증일부터 시작해 첫 cron이 누락되어도 따라잡고 이전 날짜에는 부과하지 않는다", async () => {
+  const env = runtime({activated:false});
+  assert.equal((await env.request("wrong","POST")).status,401);
+  const cold = await env.request();
+  assert.equal(cold.status,503);
+  assert.equal(cold.body.error,"activation-required");
+  assert.equal(env.queries.length,0);
+  assert.equal((await env.request("test-cron","POST")).body.nextDate,"2026-10-18");
+  assert.equal((await env.request()).body.completed,0);
+  env.setNow("2026-10-20T04:05:00+09:00");
+  assert.equal((await env.request()).body.completed,2);
+  assert.deepEqual(env.writes.map(item => item.study_date),["2026-10-18","2026-10-19"]);
+});
+
+test("프리뷰는 같은 cron 자격으로도 활성화·마감을 실행할 수 없다",async()=>{
+  const preview=runtime({deployment:"preview",activated:false});
+  assert.equal((await preview.request("test-cron","POST")).status,401);
+  assert.equal((await preview.request()).status,401);
+  assert.equal(preview.queries.length,0);
+});
+
+test("04시 바로 전 활성화는 열린 날짜를 사용하고 반복 POST는 다음 날에도 옮기지 않는다",async()=>{
+  const env=runtime({now:"2026-10-18T03:59:59+09:00",activated:false});
+  assert.equal((await env.request("test-cron","POST")).body.nextDate,"2026-10-17");
+  env.setNow("2026-10-18T04:00:00+09:00");
+  assert.equal((await env.request("test-cron","POST")).body.nextDate,"2026-10-17");
+  assert.deepEqual(env.writes,[]);
+  assert.equal((await env.request()).body.completed,1);
+});
+
 test("해당 날짜의 규칙이 없으면 최신 설정을 사용해 벌금을 만들지 않는다", async () => {
   const env = runtime();
   env.rows[env.table.versions].length = 0;
@@ -9,6 +39,14 @@ test("해당 날짜의 규칙이 없으면 최신 설정을 사용해 벌금을 
   assert.equal(result.status, 500);
   assert.equal(result.body.phase, "read");
   assert.equal(env.writes.length, 0);
+});
+
+test("뒤늦은 마감에서도 마감 시각 이후 기록된 이전 날짜 미루기는 벌금에 반영되지 않는다", async () => {
+  const env = runtime();
+  env.postpone("2026-10-17");
+  env.rows[env.table.postponements][0].requested_at = "2026-10-18T04:00:00+09:00";
+  assert.equal((await env.request()).status,200);
+  assert.equal(env.writes.length,1);
 });
 
 for(const cap of [1000,100])test(`전체 조회: ${cap}행 응답 제한에서도 1004번째 상환을 읽는다`,async()=>{
@@ -96,9 +134,28 @@ test('뒤 스터디의 조회 실패도 앞 스터디의 쓰기 전에 중단한
 test('저장 실패는 실패로 반환하고 재시도 시 이미 저장된 원장은 보존한다',async()=>{
   const env=runtime();env.rows[env.table.members].push({study_id:'study',user_id:'bob',joined_at:'2026-10-17T04:00:00+09:00'});
   env.fail('penalties',{mode:'insert',when:q=>q.input.user_id==='bob'});
-  const failed=await env.request();assert.equal(failed.status,500);assert.equal(failed.body.phase,'write');assert.equal(failed.body.penalties,1);
-  const original=JSON.stringify(env.writes[0]);env.failures.length=0;await env.request();
-  assert.equal(env.writes.length,2);assert.equal(JSON.stringify(env.writes[0]),original);
+  const failed=await env.request();assert.equal(failed.status,500);assert.equal(failed.body.phase,'write');
+  assert.equal(failed.body.penalties,0);assert.equal(env.writes.length,0);
+  env.failures.length=0;await env.request();
+  assert.equal(env.writes.length,2);assert.equal((await env.request()).body.penalties,0);
+});
+test('한 날짜의 처리 실패 후 여러 날이 지나도 놓친 마감을 차례로 복구한다',async()=>{
+  const env=runtime();env.fail('submissions');
+  assert.equal((await env.request()).status,500);
+  env.failures.length=0;env.setNow('2026-10-20T04:05:00+09:00');
+  const result=await env.request();
+  assert.equal(result.status,200);assert.equal(result.body.completed,3);
+  assert.deepEqual(env.writes.map(p=>[p.study_date,p.amount]),[['2026-10-17',10000],['2026-10-18',25000],['2026-10-19',50000]]);
+  assert.equal((await env.request()).body.penalties,0);
+});
+test('마감 복구 시 뒤늦은 수동 보충과 실제 마감 전에 푼 GitHub 기록을 구분한다',async()=>{
+  const env=runtime();env.solve('2026-10-17');
+  Object.assign(env.rows[env.table.submissions][0],{source:'manual',created_at:'2026-10-18T07:00:00+09:00'});
+  await env.request();
+  assert.equal(env.writes.length,1);
+  const delayed=runtime();delayed.solve('2026-10-17');
+  delayed.rows[delayed.table.submissions][0].created_at='2026-10-18T07:00:00+09:00';
+  await delayed.request();assert.equal(delayed.writes.length,0);
 });
 test('인증 실패 또는 cron secret 누락이면 DB에 접근하지 않는다',async()=>{
   const env=runtime();assert.equal((await env.request('wrong')).status,401);assert.equal(env.queries.length,0);
