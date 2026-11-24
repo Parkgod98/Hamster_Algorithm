@@ -181,12 +181,13 @@
   .ham-calendar .mode-month .day-heading em { display: none; }
   .ham-calendar .mode-month .day-members { gap: 3px; }
   .ham-calendar .mode-month .calendar-member {
-    flex-direction: column; align-items: center; gap: 1px; padding: 4px 1px;
-    text-align: center; border-radius: 5px;
+    display: block;
+    padding: 4px 1px; text-align: center; border-radius: 5px;
   }
-  .ham-calendar .mode-month .calendar-member-name { max-width: 100%; font-size: 12px; }
-  .ham-calendar .mode-month .calendar-member-status { justify-content: center; gap: 1px; }
-  .ham-calendar .mode-month .calendar-member-icon, .ham-calendar .mode-month .calendar-member-label { font-size: 11px; }
+  .ham-calendar .mode-month .calendar-member-name { font-size: 12px; }
+  .ham-calendar .mode-month .calendar-member-status { display: contents; }
+  .ham-calendar .mode-month .calendar-member-icon { margin-inline-start: 1px; font-size: 11px; }
+  .ham-calendar .mode-month .calendar-member-label { display: block; font-size: 11px; overflow-wrap: normal; }
   .calendar-caption { display: grid; grid-template-columns: minmax(0,1fr); gap: 5px; padding-inline: 4px; }
   .calendar-summary { margin-block-start: 4px; }
   .ham-day-sheet {
@@ -203,16 +204,6 @@
   .calendar-sections button { min-width: 44px; padding-inline: 11px; }
   .calendar-utilities { gap: 0; }
   .ham-calendar .calendar-card { border-radius: 14px; }
-}
-@media (max-width: 380px) {
-  .ham-calendar .mode-month .calendar-member {
-    display: grid; grid-template: "icon name" auto "label label" auto / auto minmax(0, auto);
-    justify-content: center; align-items: baseline; column-gap: 2px;
-  }
-  .ham-calendar .mode-month .calendar-member-status { display: contents; }
-  .ham-calendar .mode-month .calendar-member-icon { grid-area: icon; }
-  .ham-calendar .mode-month .calendar-member-name { grid-area: name; }
-  .ham-calendar .mode-month .calendar-member-label { grid-area: label; }
 }
 @media (max-width: 350px) {
   .ham-calendar.app-shell { padding-inline: max(5px, env(safe-area-inset-left)) max(5px, env(safe-area-inset-right)); }
