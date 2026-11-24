@@ -47,6 +47,13 @@ jobs:
           node scripts/migrate-release.mjs --local
           node scripts/migrate-release.mjs --local
           node scripts/verify-preview-flows.mjs after
+      - name: Diagnose isolated Realtime delivery on failure
+        if: failure()
+        run: |
+          docker logs supabase_db_hamster-preview 2>&1 | grep -F 'Hamster view change broadcast unavailable' | tail -5 || true
+          if [ -n "$HAMSTER_TEST_DATABASE_URL" ]; then
+            psql "$HAMSTER_TEST_DATABASE_URL" -Atc "select to_regprocedure('realtime.send(jsonb,text,text,boolean)'),count(*) from realtime.messages where event='invalidate';"
+          fi
       - name: Discard the ephemeral database
         if: always()
         run: supabase stop --workdir "$STACK" --no-backup

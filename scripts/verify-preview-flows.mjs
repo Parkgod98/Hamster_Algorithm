@@ -106,6 +106,7 @@ async function exercise(phase) {
   const [historical] = await rest("hamster_submissions?source_event_id=eq.preview-legacy&select=earned_difficulty,hamster_problems(difficulty)");
   assert.equal(historical.earned_difficulty, "Silver III");
   assert.equal(historical.hamster_problems.difficulty, "Silver III");
+  console.log("Deployment readiness, existing session, fresh login and historical grade passed.");
 
   const guest = await register("after-" + randomUUID().slice(0, 8));
   assert.equal((await call("/api/dashboard", { token: guest.token })).study, null);
@@ -120,6 +121,7 @@ async function exercise(phase) {
   const postpone = () => call("/api/postponements", { token: guest.token, body: { studyId: study, studyDate: day } });
   assert.equal((await postpone()).status.alreadyPostponed, true);
   assert.equal((await postpone()).duplicate, true);
+  console.log("Registration, invite approval, calendar and repeated postponement passed.");
   const snapshot = () => call("/api/sync/changes?once=1", { token: guest.token });
   const before = await snapshot();
   const form = new FormData();
@@ -131,11 +133,15 @@ async function exercise(phase) {
       signal: AbortSignal.any([stream.signal, AbortSignal.timeout(20000)]),
     });
     assert.ok(response.ok && response.headers.get("content-type")?.includes("text/event-stream"));
+    console.log("Second session is connected to the event stream.");
     const frames = events(response);
     while (!(await frames.next()).value.startsWith("event: ready\n")) { /* Wait for the subscribed server. */ }
+    console.log("The server's private Realtime channel is subscribed.");
     const start = performance.now();
     const completion = await call("/api/goals", { token: owner.token, body: form });
     assert.equal(completion.hasPhoto, false);
+    assert.notDeepEqual(await snapshot(), before);
+    console.log("English completion reached the committed change journal.");
     for await (const frame of frames) {
       if (!frame.startsWith("data: ")) continue;
       const hints = JSON.parse(frame.slice(6)).changes.studies[study] ?? [];
