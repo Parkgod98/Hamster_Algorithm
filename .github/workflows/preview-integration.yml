@@ -47,6 +47,7 @@ jobs:
           node scripts/migrate-release.mjs --local
           node scripts/migrate-release.mjs --local
           node scripts/verify-preview-flows.mjs after
+          node scripts/verify-preview-browser.mjs
       - name: Diagnose isolated Realtime delivery on failure
         if: failure()
         run: |
