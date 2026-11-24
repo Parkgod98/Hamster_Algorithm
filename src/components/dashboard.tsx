@@ -12,7 +12,8 @@ import { useCalendarData } from "./use-calendar-data";
 import type { PostponementStatus } from "@/lib/postponement-status";
 
 import { invalidateViews, peekView, putView } from "@/lib/view-cache";
-import { summarizeCalendar, type MemberState, type CalendarDay } from "@/lib/calendar-snapshot";
+import { summarizeCalendar, type CalendarDay, type DayMember } from "@/lib/calendar-snapshot";
+import { CALENDAR_STATE } from "@/lib/calendar-state";
 import { refreshMemberCalendars } from "@/lib/member-calendar-refresh";
 import type { DayGoals, DayGoalEntry } from "@/lib/day-goals";
 import { useStudyPanel } from "./use-study-panel";
@@ -38,15 +39,6 @@ const MANUAL_DIFFICULTIES:Record<ManualPlatform,DifficultyOption[]>={
   CODETREE:[{label:"삼성 기출",value:"SAMSUNG"}],
 };
 const PLATFORM_LABEL:Record<ManualPlatform,string>={BOJ:"Baekjoon",PROGRAMMERS:"Programmers",SWEA:"SWEA",CODETREE:"CodeTree"};
-const STATE_META: Record<MemberState, { icon: string; label: string }> = {
-  complete: { icon: "✓", label: "완료" },
-  presolved: { icon: "↗", label: "미리 인증" },
-  "in-progress": { icon: "◐", label: "진행 중" },
-  postponed: { icon: "→", label: "미루기" },
-  missed: { icon: "−", label: "미제출" },
-  upcoming: { icon: "·", label: "예정" },
-  inactive: { icon: "", label: "참여 전" },
-};
 const WEEKDAYS=["일","월","화","수","목","금","토"];
 
 async function accessToken(){const{data}=await browserSupabase().auth.getSession();return data.session?.access_token ?? null;}
@@ -102,34 +94,34 @@ function PeriodArrows({ label, onMove }: { label: string; onMove: (delta: number
   </div>;
 }
 
+function calendarStateLabel(member: DayMember, date: string) {
+  if (member.state === "complete" && member.resolvedOn && member.resolvedOn > date) return "보충 완료";
+  return CALENDAR_STATE[member.state].label;
+}
+
 function CalendarDate({ slot, day, viewerId, today, selected, week, onOpen }: {
   slot: ReturnType<typeof calendarSlots>[number]; day?: CalendarDay; viewerId: string;
   today: boolean; selected: boolean; week: boolean; onOpen: () => void;
 }) {
   const members = day?.members.filter(member => member.state !== "inactive") ?? [];
-  const visibleMembers = week ? members : members.slice(0, 3);
-  const mine = members.find(member => member.userId === viewerId);
-  const done = members.filter(member => member.state === "complete" || member.state === "presolved").length;
-  const hasActivity = members.some(member => member.state !== "upcoming");
-  const title = [formatDateHeading(slot.date), today && "오늘", mine && `내 인증 ${STATE_META[mine.state].label}`,
-    members.length > 0 && `멤버 ${members.length}명 중 ${done}명 완료`].filter(Boolean).join(", ");
+  const title = [formatDateHeading(slot.date), today && "오늘", ...members.map(member =>
+    `${member.name}${member.userId === viewerId ? " (나)" : ""} ${calendarStateLabel(member, slot.date)}`)].filter(Boolean).join(", ");
 
   return <button type="button" className={`calendar-day${slot.currentMonth ? "" : " is-adjacent"}${today ? " is-today" : ""}${selected ? " is-selected" : ""}`}
     aria-pressed={selected} aria-current={today ? "date" : undefined} aria-label={title} onClick={onOpen}>
     <span className="day-heading"><span className="day-number">{Number(slot.date.slice(-2))}</span>
       <span className="week-day-name">{!slot.currentMonth && `${Number(slot.date.slice(5,7))}월 · `}{slot.weekday}요일</span>{today && <em>오늘</em>}</span>
     <span className="day-members">{week && !slot.currentMonth && <span className="other-members">이 날짜 기록 보기</span>}
-      {visibleMembers.map(member => <span key={member.userId}
-      className={`calendar-member state-${member.state}`} title={`${member.name} · ${STATE_META[member.state].label}`}>
-      <span className="calendar-member-icon" aria-hidden="true">{STATE_META[member.state].icon}</span>
-      <span className="calendar-member-name">{member.name}</span>
-      <span className="calendar-member-label">{STATE_META[member.state].label}</span>
-    </span>)}
-      {members.length > visibleMembers.length && <span className="other-members">외 {members.length - visibleMembers.length}명</span>}
-    </span>
-    <span className="day-compact">
-      {mine && mine.state !== "upcoming" && <span className={`compact-state state-${mine.state}`}>{STATE_META[mine.state].label}</span>}
-      {hasActivity && <span className="day-completions">{done}/{members.length}명</span>}
+      {members.map(member => {
+        const status = CALENDAR_STATE[member.state];
+        return <span key={member.userId} className={`calendar-member state-${member.state}`}>
+          <span className="calendar-member-name">{member.name}</span>
+          <span className="calendar-member-status">
+            <span className="calendar-member-icon" aria-hidden="true">{status.icon}</span>
+            <span className="calendar-member-label">{calendarStateLabel(member, slot.date)}</span>
+          </span>
+        </span>;
+      })}
     </span>
   </button>;
 }
@@ -295,7 +287,6 @@ export function Dashboard({githubAppSlug}:{githubAppSlug:string}){
     </section>
     <div className="calendar-caption">
       <p className="calendar-cutoff">인증일은 한국시간 오전 4시에 바뀌어요.</p>
-      {calendarMode === "month" && <p className="mobile-day-key">내 인증 상태 · 완료 인원/참여 인원</p>}
       <dl className="calendar-summary" aria-label="이달의 스터디 인증 집계">
         <div><dt>완료</dt><dd>{data.summary.complete}</dd></div>
         <div><dt>미루기</dt><dd>{data.summary.postponed}</dd></div>
@@ -332,7 +323,7 @@ export function Dashboard({githubAppSlug}:{githubAppSlug:string}){
       <p>오전 4시부터 다음 날 오전 3시 59분까지</p></div>
       <button type="button" className="close-button" aria-label="날짜 상세 닫기" onClick={() => setDetailOpen(false)}>×</button>
     </div>
-    <div className="detail-members">{(selectedDay?.members??[]).filter(m=>m.state!=="inactive").map(m=>{const meta=STATE_META[m.state]; const submissions=detail?.data?.submissions.filter(row=>row.userId===m.userId)??[]; const penalty=detail?.data?.penalties.find(row=>row.user_id===m.userId)?.amount??0;return<section className="detail-member" key={m.userId}><div className="detail-member-heading"><div><strong>{m.name}</strong>{m.userId===data.currentUserId&&<span className="me-badge">나</span>}</div><span className={`state-label state-${m.state}`}>{meta.icon} {meta.label}</span></div>{(m.completedGoals??[]).length>0&&<p>{m.completedGoals.map(goal=>GOAL_LABELS[goal]).join(" · ")} 완료</p>}{submissions.length?<div className="submission-list">{submissions.map((s,i)=><div className="submission-row" key={`${s.problemId}-${s.solvedAt}-${i}`}><div><strong>{s.source==="manual"?`${PLATFORM_LABEL[s.platform as ManualPlatform]??s.platform} · ${s.difficulty}`:s.title}</strong><span>{s.source==="manual"?<>수동 인증 <em className="manual-badge">수동</em></>:<>{s.platform} {s.problemId} · {s.difficulty} · {formatTime(s.solvedAt)}</>}</span></div><b>+{s.credit.toFixed(2)}</b></div>)}</div>:<p className="empty-copy">{detail?.error || (!detail?.data ? "상세 기록을 불러오는 중…" : detail.data.algorithm ? "이 날짜에 직접 기록된 풀이가 없습니다." : "")}</p>}{detail?.data?.algorithm && <div className="credit-row"><span>직접 풀이 인정량</span><strong>{m.directCredits.toFixed(2)} / 1.00</strong></div>}{m.state==="presolved"&&<p className="presolve-note">미리 인증한 목표가 반영된 날짜예요.</p>}{m.resolvedOn&&m.resolvedOn>selectedDate&&<p className="presolve-note">{m.resolvedOn}에 보충 완료한 인증입니다.</p>}{m.postponedAt&&<p className="postpone-note">{formatTime(m.postponedAt)} 미루기 신청</p>}{penalty>0&&<div className="penalty-row"><span>미제출 벌금</span><strong>{penalty.toLocaleString()}원</strong></div>}</section>})}
+    <div className="detail-members">{(selectedDay?.members??[]).filter(m=>m.state!=="inactive").map(m=>{const meta=CALENDAR_STATE[m.state]; const submissions=detail?.data?.submissions.filter(row=>row.userId===m.userId)??[]; const penalty=detail?.data?.penalties.find(row=>row.user_id===m.userId)?.amount??0;return<section className="detail-member" key={m.userId}><div className="detail-member-heading"><div><strong>{m.name}</strong>{m.userId===data.currentUserId&&<span className="me-badge">나</span>}</div><span className={`state-label state-${m.state}`}><span aria-hidden="true">{meta.icon}</span> {calendarStateLabel(m, selectedDate)}</span></div>{(m.completedGoals??[]).length>0&&<p>{m.completedGoals.map(goal=>GOAL_LABELS[goal]).join(" · ")} 완료</p>}{submissions.length?<div className="submission-list">{submissions.map((s,i)=><div className="submission-row" key={`${s.problemId}-${s.solvedAt}-${i}`}><div><strong>{s.source==="manual"?`${PLATFORM_LABEL[s.platform as ManualPlatform]??s.platform} · ${s.difficulty}`:s.title}</strong><span>{s.source==="manual"?<>수동 인증 <em className="manual-badge">수동</em></>:<>{s.platform} {s.problemId} · {s.difficulty} · {formatTime(s.solvedAt)}</>}</span></div><b>+{s.credit.toFixed(2)}</b></div>)}</div>:<p className="empty-copy">{detail?.error || (!detail?.data ? "상세 기록을 불러오는 중…" : detail.data.algorithm ? "이 날짜에 직접 기록된 풀이가 없습니다." : "")}</p>}{detail?.data?.algorithm && <div className="credit-row"><span>직접 풀이 인정량</span><strong>{m.directCredits.toFixed(2)} / 1.00</strong></div>}{m.state==="presolved"&&<p className="presolve-note">미리 인증한 목표가 반영된 날짜예요.</p>}{m.resolvedOn&&m.resolvedOn>selectedDate&&<p className="presolve-note">{m.resolvedOn}에 보충 완료한 인증입니다.</p>}{m.postponedAt&&<p className="postpone-note">{formatTime(m.postponedAt)} 미루기 신청</p>}{penalty>0&&<div className="penalty-row"><span>미제출 벌금</span><strong>{penalty.toLocaleString()}원</strong></div>}</section>})}
     {detail?.data?.algorithm && selectedDate<=data.studyDate&&<section className="manual-certification"><button className="manual-toggle" onClick={()=>setManualOpen(open=>!open)} aria-expanded={manualOpen}><span><strong>자동 인증이 안 됐나요?</strong><small>플랫폼 · 난이도 · 문제 수만 입력하면 됩니다.</small></span><b>{manualOpen?"−":"+ 수동 풀이 등록"}</b></button>{manualOpen&&<div className="manual-form"><label><span>플랫폼</span><select value={manualPlatform} onChange={e=>changeManualPlatform(e.target.value as ManualPlatform)}>{(Object.keys(PLATFORM_LABEL) as ManualPlatform[]).map(platform=><option value={platform} key={platform}>{PLATFORM_LABEL[platform]}</option>)}</select></label><label><span>난이도</span><select value={manualDifficulty} onChange={e=>setManualDifficulty(e.target.value)}>{MANUAL_DIFFICULTIES[manualPlatform].map(option=><option value={option.value} key={option.value}>{option.label}</option>)}</select></label><label><span>문제 수</span><input type="number" min={1} max={20} value={manualCount} onChange={e=>setManualCount(Math.max(1,Math.min(20,Number(e.target.value)||1)))}/></label><button className="primary-button full" onClick={()=>void addManualSubmission()} disabled={busy==="manual"}>{busy==="manual"?"등록 중…":`${manualCount}문제 등록`}</button><p>사진이나 문제 번호는 저장하지 않습니다. 본인 풀이만 수동으로 추가됩니다.</p></div>}</section>}
     {detail?.data?.goals && <EnglishDayPanel key={study.id+selectedDate} viewerId={viewerId} studyId={study.id} date={selectedDate}
       data={detail.data.goals} completedGoals={selectedDay?.members.find(m=>m.userId===viewerId)?.completedGoals} onChanged={confirmGoal} />}

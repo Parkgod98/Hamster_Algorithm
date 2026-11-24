@@ -1,45 +1,59 @@
-import { AppBrand } from "@/components/app-brand";
 import { AccountGate } from "@/components/account-gate";
+import { AppBrand } from "@/components/app-brand";
 import { AuthPanel } from "@/components/auth-panel";
+import { CALENDAR_STATE } from "@/lib/calendar-state";
 import styles from "./home.module.css";
 
-const exampleWeek = [
-  ["월", 16, "완료"], ["화", 17, "완료"], ["수", 18, "미루기"],
-  ["목", 19, "완료"], ["금", 20, ""], ["토", 21, ""], ["일", 22, ""],
+const exampleDays = [
+  { date: "16", weekday: "월", records: [["모카", "complete"], ["두부", "complete"], ["보리", "complete"]] },
+  { date: "17", weekday: "화", records: [["모카", "complete"], ["두부", "complete"], ["보리", "missed"]] },
+  { date: "18", weekday: "수", records: [["모카", "complete"], ["두부", "postponed"], ["보리", "missed"]] },
 ] as const;
 
 function CalendarPreview() {
   return (
-    <figure className={styles.preview} aria-label="스터디 인증 달력 예시">
-      <figcaption>인증 달력 미리보기</figcaption>
-      <p className={styles.month}>11월<span>2026</span></p>
-      <ol className={styles.week}>
-        {exampleWeek.map(([weekday, date, state]) => (
-          <li key={date} className={date === 19 ? styles.selected : undefined}>
-            <span>{weekday}</span><strong>{date}</strong>
-            <i data-state={state} aria-label={state || "예정"} />
+    <figure className={styles.preview}>
+      <figcaption>
+        <span className={styles.caption}>스터디 인증 달력 예시</span>
+        <h2 className={styles.month}><span>2026년</span> 11월</h2>
+      </figcaption>
+      <ol className={styles.days}>
+        {exampleDays.map(({ date, weekday, records }) => (
+          <li key={date} className={styles.day}>
+            <h3><time dateTime={`2026-11-${date}`}>{date}<span>{weekday}요일</span></time></h3>
+            <ul className={styles.records}>
+              {records.map(([name, state]) => (
+                <li key={name} data-state={state}>
+                  <strong>{name}</strong>
+                  <span className={styles.status}>
+                    <span className={styles.icon} aria-hidden="true">{CALENDAR_STATE[state].icon}</span>
+                    {CALENDAR_STATE[state].label}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </li>
         ))}
       </ol>
-      <div className={styles.day}>
-        <h2>19일 목요일</h2>
-        <ul>
-          <li><span className={styles.avatar}>윤</span><div><strong>윤서</strong><small>영어 인증</small></div><span className={styles.done}>완료</span></li>
-          <li><span className={styles.avatar}>지</span><div><strong>지우</strong><small>알고리즘 인증</small></div><span className={styles.done}>완료</span></li>
-        </ul>
-      </div>
     </figure>
   );
 }
 
 export default function Home() {
   return (
-    <AccountGate landing><main className={styles.home}>
-      <header className={styles.header}><AppBrand /></header>
-      <div className={styles.content}>
-        <section className={styles.access} aria-label="햄쮸터 계정"><AuthPanel /></section>
-        <CalendarPreview />
-      </div>
-    </main></AccountGate>
+    <AccountGate landing>
+      <main className={styles.home}>
+        <header className={styles.header}>
+          <AppBrand />
+          <a href="#account" className={styles.loginLink}>로그인하기 <span aria-hidden="true">↓</span></a>
+        </header>
+        <div className={styles.content}>
+          <CalendarPreview />
+          <section id="account" className={styles.access} aria-label="햄쮸터 계정">
+            <AuthPanel />
+          </section>
+        </div>
+      </main>
+    </AccountGate>
   );
 }

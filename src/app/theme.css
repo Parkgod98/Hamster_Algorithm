@@ -10,6 +10,18 @@
   --segment-track: #e9e8e2;
   --segment-shadow: 0 1px 4px #28251c18;
   --header-width: 1080px;
+  --calendar-complete-ink: #356342;
+  --calendar-complete-fill: #e7f2e7;
+  --calendar-presolved-ink: #3e5e8a;
+  --calendar-presolved-fill: #e8effb;
+  --calendar-postponed-ink: #814b12;
+  --calendar-postponed-fill: #fff0cf;
+  --calendar-missed-ink: #963732;
+  --calendar-missed-fill: #fbe6e3;
+  --calendar-in-progress-ink: #65591e;
+  --calendar-in-progress-fill: #f7f1d9;
+  --calendar-upcoming-ink: #61645e;
+  --calendar-upcoming-fill: #f1f2ee;
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", sans-serif;
   background: var(--paper);
   color: var(--ink);
