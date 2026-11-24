@@ -1,5 +1,6 @@
-// Vercel runs this before building the live release. A failed check keeps the
-// previously deployed application serving traffic.
+import { pathToFileURL } from "node:url";
+
+// The production postbuild runs the same read-only probes after the transaction.
 export async function checkDeployment(env, request = fetch) {
   const url = new URL(env.NEXT_PUBLIC_SUPABASE_URL);
   const expected = env.HAMSTER_EXPECTED_SUPABASE_HOST;
@@ -33,13 +34,12 @@ export async function checkDeployment(env, request = fetch) {
   }));
 }
 
-if (process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV === "preview") {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.env.VERCEL_ENV === "preview") {
   try {
     await checkDeployment(process.env);
     console.log("Deployment database and auth checks passed.");
   } catch (error) {
     console.error("Deployment readiness:", error.message);
-    if (process.env.VERCEL_ENV === "production") process.exitCode = 1;
-    else console.warn("Preview is available for UI review. Verify /api/health?mode=ready before promotion.");
+    console.warn("Preview is available for UI review. Verify /api/health?mode=ready before promotion.");
   }
 }
