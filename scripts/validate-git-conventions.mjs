@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 const allowedTypes = ["feat", "fix", "docs", "refactor", "test", "chore", "ci"];
 const typePattern = allowedTypes.join("|");
@@ -31,6 +31,21 @@ if (pr) {
   for (const section of requiredSections) if (!body.includes(section)) errors.push(`PR 본문에 '${section}' 필요`);
   const messages = execSync(`git log --format=%s ${pr.base.sha}..${pr.head.sha}`, { encoding: "utf8" }).split("\n").filter(Boolean);
   for (const message of messages) if (!commitPattern.test(message)) errors.push(`커밋 메시지 '${message}' 형식 오류`);
+  const file = "src/lib/release-note-content.json";
+  const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  const changed = git("diff", "--name-only", `${pr.base.sha}...${pr.head.sha}`).split("\n");
+  if (changed.some(path => /^(src\/|public\/|supabase\/migrations\/)/.test(path))) {
+    const previous = git("ls-tree", "--name-only", pr.base.sha, "--", file)
+      ? JSON.parse(git("show", `${pr.base.sha}:${file}`)) : null;
+    const note = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+    if (!Number.isSafeInteger(note?.version) || note.version <= (previous?.version ?? 0) ||
+        !Array.isArray(note.changes) || !note.changes.length ||
+        !note.changes.every(change => typeof change?.title === "string" && /[가-힣]/.test(change.title) &&
+          typeof change.body === "string" && /[가-힣]/.test(change.body)) ||
+        JSON.stringify(note.changes) === JSON.stringify(previous?.changes)) {
+      errors.push(`앱을 변경하면 ${file}의 버전을 올리고 사용자가 경험할 변화를 한글로 적어주세요.`);
+    }
+  }
 }
 if (errors.length) { errors.forEach((e) => console.error(`- ${e}`)); process.exit(1); }
 console.log("Git convention validation passed.");

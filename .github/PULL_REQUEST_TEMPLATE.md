@@ -2,6 +2,8 @@
 
 - 
 
+- [ ] 사용자에게 배포할 업데이트의 버전과 달라진 점을 `src/lib/release-note-content.json`에 적었다.
+
 ## 검증
 
 - [ ] `npm run validate`

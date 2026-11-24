@@ -1,6 +1,11 @@
 const SEOUL_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export function expectedClosedDay(now: Date) {
+  // The 04:05 KST worker has a 60-minute scheduling and execution allowance.
+  return addStudyDays(studyDateFromTimestamp(new Date(now.getTime() - 65 * 60_000).toISOString()), -1);
+}
+
 export function studyDateFromTimestamp(iso: string, cutoffHour = 4): string {
   const utc = new Date(iso).getTime();
   if (Number.isNaN(utc)) throw new Error("Invalid timestamp");
@@ -21,4 +26,11 @@ export function studyDayStartTimestamp(date: string, cutoffHour = 4): string {
 
 export function studyDayEndExclusiveTimestamp(date: string, cutoffHour = 4): string {
   return studyDayStartTimestamp(addStudyDays(date, 1), cutoffHour);
+}
+
+
+export function shiftMonth(month: string, delta: number) {
+  const [year, number] = month.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, number - 1 + delta, 1));
+  return shifted.toISOString().slice(0, 7);
 }

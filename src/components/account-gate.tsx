@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { AccountRequestError, accountRequest } from "@/lib/account-browser";
+import { markAutomaticCalendarNavigation } from "@/lib/action-timing";
 import { knownEmptyDirectory } from "@/lib/directory-cache";
 import { accountDestination, rememberAccountReturn } from "@/lib/study-navigation";
 import { browserSupabase, currentAccountId, forgetLegacySession, onStoredAccountChange } from "@/lib/supabase-browser";
@@ -17,6 +18,7 @@ export function AccountGate({ children, landing = false }: { children: ReactNode
   const router = useRouter();
   const [entry, setEntry] = useState<EntryState>({ kind: "checking" });
   const [attempt, setAttempt] = useState(0);
+  const initialLanding = useRef(true);
 
   function retry() {
     setEntry({ kind: "checking" });
@@ -32,6 +34,7 @@ export function AccountGate({ children, landing = false }: { children: ReactNode
       retry();
     });
     function showGuest() {
+      initialLanding.current = false;
       if (landing) setEntry({ kind: "ready" });
       else router.replace("/");
     }
@@ -40,7 +43,11 @@ export function AccountGate({ children, landing = false }: { children: ReactNode
       const { data: { session } } = await browserSupabase().auth.getSession();
       if (!active) return;
       if (session?.access_token.startsWith("hs1_")) {
-        if (landing) router.replace(accountDestination(false, knownEmptyDirectory(session.user.id)));
+        if (landing) {
+          const path = accountDestination(false, knownEmptyDirectory(session.user.id));
+          if (initialLanding.current && path.split("?")[0] === "/dashboard") markAutomaticCalendarNavigation();
+          router.replace(path);
+        }
         else setEntry({ kind: "ready" });
         return;
       }

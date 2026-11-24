@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DB } from "./db";
-import { dateRange, evaluateTimelineByDay, type TimedCredit, type TimelineDay, type TimelineResult } from "./progress";
+import { dateRange, evaluateTimelineByDay, type TimedCredit, type TimelineDay, type TimelineResult, type TimelineResume } from "./progress";
 import { normalizeRuleConfig, submissionCredit, type ManualGoal } from "./rules";
 import { normalizeRuleVersions, rulesForDate, type EffectiveRules, type RuleVersionRow } from "./rule-version";
-import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "./study-day";
+import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp, studyDayStartTimestamp } from "./study-day";
 import { readAllRows } from "./read-all-rows";
 import type { NotificationProgressState } from "./notification-rules";
 import type { Platform } from "./types";
@@ -25,21 +25,25 @@ export type StudyProgressContext = {
   completionsByUser: Map<string, GoalCompletionRow[]>;
 };
 
-export function readGoalCompletions(admin: SupabaseClient, studyId: string, through: string, userIds?: string[], asOf?: string) {
+export function readGoalCompletions(admin: SupabaseClient, studyId: string, through: string, userIds?: string[], asOf?: string,
+  since?: string, lateBefore?: string) {
   return readAllRows<GoalCompletionRow>((from, to) => {
     let query = admin.from(DB.goalCompletions).select("user_id,study_date,goal,created_at")
       .eq("study_id", studyId).lte("study_date", through);
     if (userIds?.length) query = query.in("user_id", userIds);
     if (asOf) query = query.lt("created_at", asOf);
+    if (since) query = query.gte("study_date", since);
+    if (lateBefore) query = query.lt("study_date", lateBefore).gte("created_at", studyDayStartTimestamp(lateBefore));
     return query.order("study_date").order("user_id").order("goal").range(from, to);
   });
 }
 
-export function evaluateStudyTimeline(days: TimelineDay[], current: string, versions: EffectiveRules[], completions: GoalCompletionRow[]) {
+export function evaluateStudyTimeline(days: TimelineDay[], current: string, versions: EffectiveRules[], completions: GoalCompletionRow[],
+  resume?: TimelineResume) {
   return evaluateTimelineByDay(days, current,
     (date) => rulesForDate(versions, date).maxPresolveDays,
     (date) => rulesForDate(versions, date).ruleConfig.goals,
-    completions.map((row) => ({ target: row.study_date, earned: studyDateFromTimestamp(row.created_at), at: row.created_at, goal: row.goal })));
+    completions.map((row) => ({ target: row.study_date, earned: studyDateFromTimestamp(row.created_at), at: row.created_at, goal: row.goal })), resume);
 }
 
 export function groupDailyCredits(rows: DailySolutions[], versions: EffectiveRules[], joinedDate: string, endDate: string) {

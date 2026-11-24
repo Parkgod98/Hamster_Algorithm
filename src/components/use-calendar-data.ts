@@ -6,9 +6,10 @@ import { browserSupabase, currentAccountId, forgetAccountSession, type AppSessio
 import { validId } from "@/lib/community";
 import { forgetStudy, rememberedStudy, rememberStudy } from "@/lib/study-navigation";
 import { type CalendarSnapshot } from "@/lib/calendar-cache";
-import { invalidateViews, peekView, putView, readView } from "@/lib/view-cache";
-import { knownEmptyDirectory, rememberEmptyDirectory } from "@/lib/directory-cache";
+import { invalidateViews, peekView, putView, readView, needsCalendarStamp, staleColdCalendar } from "@/lib/view-cache";
+import { knownEmptyDirectory, rememberNoMembership } from "@/lib/directory-cache";
 import { useViewRevision } from "./use-view-revision";
+import { markCalendarEntry, reportAfterPaint } from "@/lib/action-timing";
 import { studyDateFromTimestamp, studyDayEndExclusiveTimestamp } from "@/lib/study-day";
 
 class CalendarAccessError extends Error {
@@ -16,6 +17,8 @@ class CalendarAccessError extends Error {
     super("대시보드 접근 권한을 확인해주세요.");
   }
 }
+
+class CalendarReadError extends Error {}
 
 function calendarUsable(snapshot: CalendarSnapshot, today: string, viewerId: string, studyId: string, month: string) {
   const status = snapshot.todayPostponement;
@@ -34,11 +37,19 @@ export function useCalendarData<T extends CalendarSnapshot>() {
   const requestedMonth = useRef("");
   const sequence = useRef(0);
   const mounted = useRef(false);
+  const firstCalendar = useRef<{ start: number; done: boolean } | null>(null);
 
   const run = useCallback(async (targetMonth?: string, force = false): Promise<T | null> => {
     const requestId = ++sequence.current;
     const currentDate = studyDateFromTimestamp(new Date().toISOString());
     const active = () => mounted.current && requestId === sequence.current;
+    let access = "";
+    const reportFirst = (warm: boolean, ok: boolean) => {
+      const first = firstCalendar.current;
+      if (!first || first.done || !access) return;
+      first.done = true;
+      reportAfterPaint(warm ? "calendar_warm" : "calendar_cold", first.start, access, ok);
+    };
     try {
       const { data: auth } = await browserSupabase().auth.getSession();
       if (!active()) return null;
@@ -52,6 +63,7 @@ export function useCalendarData<T extends CalendarSnapshot>() {
         liveData.current = null; setData(null);
       }
       viewer.current = session.user.id;
+      access = session.access_token;
       const studyId = new URLSearchParams(window.location.search).get("studyId")
         || liveData.current?.study?.id || rememberedStudy(session.user.id) || "";
       if (studyId && !validId(studyId)) {
@@ -79,6 +91,7 @@ export function useCalendarData<T extends CalendarSnapshot>() {
       const cached = studyId ? peekView<T>(id, key) : undefined;
       if (cached && !force && calendarUsable(cached, currentDate, id, studyId, month)) {
         apply(cached);
+        reportFirst(true, true);
         setRefreshing(false);
         return cached;
       }
@@ -87,19 +100,30 @@ export function useCalendarData<T extends CalendarSnapshot>() {
       if (liveData.current?.todayPostponement?.canPostpone) setData({ ...liveData.current, todayPostponement: null });
       setRefreshing(true);
       setError(""); setWarning("");
-      const load = async (signal: AbortSignal) => {
-        const response = await fetch(`/api/dashboard?${new URLSearchParams({month, studyId})}`, {
+      const fetchMonth = async (signal: AbortSignal, stamped: boolean) => {
+        const params = new URLSearchParams({ month, studyId });
+        if (stamped) params.set("baseline", "1");
+        const response = await fetch(`/api/dashboard?${params}`, {
           headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store", signal,
         });
         if (response.status === 401 || response.status === 403 || response.status === 404) {
           throw new CalendarAccessError(response.status, session, studyId);
         }
-        if (!response.ok) throw new Error("달력을 불러오지 못했습니다.");
+        if (!response.ok) {
+          const problem = await response.json().catch(() => null);
+          const reference = typeof problem?.reference === "string" && /^CAL-[a-z0-9-]{5,32}$/.test(problem.reference) ? problem.reference : "";
+          throw new CalendarReadError(reference);
+        }
         const value = await response.json() as T;
         if (value.currentUserId !== id || value.month !== month || (studyId && value.study?.id !== studyId)) {
           throw new Error("Calendar response scope mismatch");
         }
         return value;
+      };
+      const load = async (signal: AbortSignal) => {
+        const stamped = needsCalendarStamp(id);
+        const value = await fetchMonth(signal, stamped);
+        return stamped && staleColdCalendar(id, value) ? fetchMonth(signal, false) : value;
       };
       // A live change can supersede the very first request, before this hook
       // knows which calendar to subscribe to. The active navigation still needs a result.
@@ -112,16 +136,18 @@ export function useCalendarData<T extends CalendarSnapshot>() {
       }
       if (!active()) return null;
       if (!next.study) {
-        rememberEmptyDirectory(id);
+        rememberNoMembership(id);
         router.replace("/studies");
         return null;
       }
       if (!studyId) putView(id, `calendar:${next.study.id}:${month}`, next);
       rememberStudy(session.user.id, next.study.id);
       apply(next);
+      reportFirst(false, true);
       return next;
     } catch (caught) {
       if (!active() || (caught instanceof Error && caught.name === "AbortError")) return null;
+      if (!(caught instanceof CalendarAccessError)) reportFirst(false, false);
       if (caught instanceof CalendarAccessError || (caught instanceof Error && caught.message === "Calendar response scope mismatch")) {
         liveData.current = null; setData(null);
         if (caught instanceof CalendarAccessError) {
@@ -136,9 +162,11 @@ export function useCalendarData<T extends CalendarSnapshot>() {
           }
         }
         setError("로그인과 스터디 참여 상태를 다시 확인해주세요.");
-      } else if (liveData.current) {
-        setWarning("최신 정보를 가져오지 못했어요. 이전 화면을 표시 중입니다. 새로고침해주세요.");
-      } else setError("달력을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+      } else {
+        const reference = caught instanceof CalendarReadError && caught.message ? " 문의 번호 " + caught.message : "";
+        if (liveData.current) setWarning("최신 정보를 가져오지 못했어요. 이전 화면을 표시 중입니다. 새로고침해주세요." + reference);
+        else setError("달력을 불러오지 못했습니다. 잠시 후 다시 시도해주세요." + reference);
+      }
       return null;
     } finally {
       if (active()) setRefreshing(false);
@@ -147,6 +175,7 @@ export function useCalendarData<T extends CalendarSnapshot>() {
 
   useEffect(() => {
     mounted.current = true;
+    firstCalendar.current ??= { start: markCalendarEntry(), done: false };
     const timer = window.setTimeout(() => void run(), 0);
     const onVisible = () => {
       if (document.visibilityState === "visible") void run(requestedMonth.current);

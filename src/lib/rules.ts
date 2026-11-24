@@ -1,13 +1,25 @@
 import type { Platform } from "./types";
 
-export const GOAL_LABELS = { algorithm: "알고리즘", english: "영어", reading: "독서" } as const;
-export type StudyGoal = keyof typeof GOAL_LABELS;
-export type ManualGoal = Exclude<StudyGoal, "algorithm">;
+type GoalDefinition = { label: string; mark: string; input: "solutions" | "manual"; example?: string };
+export const GOALS = {
+  algorithm: { label: "알고리즘", mark: "⟨/⟩", input: "solutions" },
+  english: { label: "영어", mark: "Aa", input: "manual", example: "매일 영어 콘텐츠로 20분 공부하기" },
+  reading: { label: "독서", mark: "▤", input: "manual", example: "매일 책 10쪽 읽기" },
+} as const satisfies Record<string, GoalDefinition>;
+export type StudyGoal = keyof typeof GOALS;
+export type ManualGoal = { [K in StudyGoal]: typeof GOALS[K]["input"] extends "manual" ? K : never }[StudyGoal];
+export const GOAL_KEYS = Object.keys(GOALS) as StudyGoal[];
+export const GOAL_LABELS = Object.fromEntries(GOAL_KEYS.map(goal => [goal, GOALS[goal].label])) as Record<StudyGoal, string>;
+
+export function isManualGoal(goal: unknown): goal is ManualGoal {
+  return typeof goal === "string" && Object.hasOwn(GOALS, goal) && GOALS[goal as StudyGoal].input === "manual";
+}
 export type GoalPolicy = {
   allowed: StudyGoal[];
   mode: "all" | "count";
   required: number;
   englishRule: string;
+  instructions?: Partial<Record<ManualGoal, string>>;
 };
 export const DEFAULT_GOALS: GoalPolicy = { allowed: ["algorithm"], mode: "all", required: 1, englishRule: "" };
 
@@ -20,7 +32,19 @@ export function validGoalPolicy(value: unknown): value is GoalPolicy {
     && (policy.mode === "all" || policy.mode === "count") && Number.isInteger(policy.required)
     && policy.required! >= 1 && policy.required! <= allowed.length
     && (policy.mode !== "all" || policy.required === allowed.length)
-    && typeof policy.englishRule === "string" && policy.englishRule.length <= 4000;
+    && typeof policy.englishRule === "string" && policy.englishRule.length <= 4000
+    && (policy.instructions === undefined || (policy.instructions !== null && typeof policy.instructions === "object"
+      && !Array.isArray(policy.instructions) && Object.entries(policy.instructions).every(([goal, rule]) =>
+        isManualGoal(goal) && typeof rule === "string" && rule.length <= 4000)));
+}
+
+// English stays in the field used by installed older versions.
+export function goalInstructions(policy: GoalPolicy, goal: ManualGoal) {
+  return goal === "english" ? policy.englishRule : policy.instructions?.[goal] ?? "";
+}
+export function withGoalInstructions(policy: GoalPolicy, goal: ManualGoal, text: string): GoalPolicy {
+  if (goal === "english") return { ...policy, englishRule: text };
+  return { ...policy, instructions: { ...policy.instructions, [goal]: text } };
 }
 
 export function goalPolicy(config: unknown): GoalPolicy {

@@ -7,10 +7,10 @@ import ts from 'typescript';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const nodeRequire=createRequire(import.meta.url);
-export const TABLE={studies:'hamster_studies',members:'hamster_study_members',submissions:'hamster_submissions',postponements:'hamster_postponements',versions:'hamster_study_rule_versions',penalties:'hamster_penalties',goals:'hamster_goal_completions'};
+export const TABLE={studies:'hamster_studies',members:'hamster_study_members',submissions:'hamster_submissions',postponements:'hamster_postponements',versions:'hamster_study_rule_versions',penalties:'hamster_penalties',goals:'hamster_goal_completions',attempts:'hamster_close_attempts'};
 
 // Executes the actual route and actual domain modules. No network or real Supabase client is available.
-export function runtime({cap=1000,joined='2026-10-17',now='2026-10-18T04:05:00+09:00',secret='test-cron',routeSource}={}) {
+export function runtime({cap=1000,joined='2026-10-17',now='2026-10-18T04:05:00+09:00',secret='test-cron',deployment='production',activated=true,routeSource}={}) {
   let clock=Date.parse(now),sequence=0;
   const state={rows:Object.fromEntries(Object.values(TABLE).map(k=>[k,[]])),queries:[],writes:[],failures:[],onRead:null};
   state.rows[TABLE.studies].push({id:'study',created_at:`${joined}T04:00:00+09:00`,rule_config:{},max_presolve_days:2,max_consecutive_postpone:2,postpone_deadline_hour:23,postpone_deadline_minute:59});
@@ -29,11 +29,18 @@ export function runtime({cap=1000,joined='2026-10-17',now='2026-10-18T04:05:00+0
     order(key,{ascending=true}={}){this.orders.push([key,ascending]);return this;}
     range(from,to){this.from=from;this.to=to;return this;}
     insert(value){this.mode='insert';this.input=value;return this;}
+    upsert(value){this.mode='upsert';this.input=value;return this;}
     then(resolve,reject){return Promise.resolve().then(()=>this.execute()).then(resolve,reject);}
     execute(){
       const record={table:this.table,mode:this.mode,from:this.from??0,orders:this.orders};state.queries.push(record);
       const failure=state.failures.find(f=>f.table===this.table&&(f.mode??'select')===this.mode&&(f.from===undefined||f.from===record.from)&&(!f.when||f.when(this)));
       if(failure)return {data:null,error:failure.nullData?null:{code:'TEST_DB_FAILURE',message:'private database detail'}};
+      if(this.mode==='upsert' && this.table===TABLE.attempts) {
+        const existing=state.rows[this.table].find(row=>row.scheduled_day===this.input.scheduled_day);
+        if(existing) Object.assign(existing,this.input);
+        else state.rows[this.table].push({...this.input});
+        return {data:null,error:null};
+      }
       if(this.mode==='insert'){
         if(this.table!==TABLE.penalties)throw new Error('Unexpected write');
         const p=this.input;
@@ -46,7 +53,30 @@ export function runtime({cap=1000,joined='2026-10-17',now='2026-10-18T04:05:00+0
       const data=structuredClone(sorted.slice(from,from+size));record.returned=data.length;return {data,error:null};
     }
   }
-  const modules=new Map(),admin={from:table=>new Query(table)};
+  // Most tests represent a previously activated worker. Cold cutover tests opt out.
+  let nextDay=activated ? new Date(clock+5*3600000-86400000).toISOString().slice(0,10) : null;
+  const modules=new Map(),admin={from:table=>new Query(table), async rpc(name,args) {
+    if(name==='hamster_activate_finalization'){
+      nextDay??=args.p_day;
+      return {data:{day:nextDay,revision:'0'},error:null};
+    }
+    if(name==='hamster_next_finalization_day'){
+      return {data:nextDay ? {day:nextDay,revision:'0'} : null,error:null};
+    }
+    if(name!=='hamster_finish_finalization_day')throw new Error('Unexpected RPC');
+    if(nextDay>args.p_day)return {data:0,error:null};
+    const previousCount=state.writes.length;
+    for(const penalty of args.p_penalties){
+      const result=new Query(TABLE.penalties).insert(penalty).execute();
+      if(result.error && result.error.code!=='23505'){
+        const rollback=new Set(state.writes.splice(previousCount).map(p=>p.id));
+        state.rows[TABLE.penalties]=state.rows[TABLE.penalties].filter(p=>!rollback.has(p.id));
+        return result;
+      }
+    }
+    nextDay=new Date(Date.parse(nextDay+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+    return {data:state.writes.length-previousCount,error:null};
+  }};
   function load(filename){
     const abs=path.resolve(root,filename);if(modules.has(abs))return modules.get(abs);
     const source=ts.transpileModule(fs.readFileSync(abs,'utf8'),{fileName:abs,compilerOptions:{
@@ -60,15 +90,15 @@ export function runtime({cap=1000,joined='2026-10-17',now='2026-10-18T04:05:00+0
       const base=name.startsWith('@/')?path.join(root,'src',name.slice(2)):path.resolve(path.dirname(abs),name);
       return load(base.endsWith('.ts')?base:base+'.ts');
     };
-    new vm.Script(`(function(exports,require){${source}\n})`,{filename:abs}).runInNewContext({Date:TestDate,Error,Map,Set,Array,Number,Math,Request,Response,Headers,URL,process:{env:{CRON_SECRET:secret}},console})(exports,require);
+    new vm.Script(`(function(exports,require){${source}\n})`,{filename:abs}).runInNewContext({Date:TestDate,Error,Map,Set,Array,Number,Math,Request,Response,Headers,URL,process:{env:{CRON_SECRET:secret,VERCEL_ENV:deployment}},console})(exports,require);
     return exports;
   }
   return {...state,table:TABLE,admin,load,setNow:value=>{clock=Date.parse(value);},setReadHook:fn=>{state.onRead=fn;},
     fail:(key,options={})=>state.failures.push({table:TABLE[key],...options}),
-    solve:(date,difficulty='Gold V',user='alice',study='study')=>state.rows[TABLE.submissions].push({id:`sub-${String(++sequence).padStart(8,'0')}`,study_id:study,user_id:user,solved_at:new Date(date.includes('T')?date:`${date}T12:00:00+09:00`).toISOString(),hamster_problems:{platform:'BOJ',difficulty}}),
-    postpone:(date,user='alice')=>state.rows[TABLE.postponements].push({id:`post-${++sequence}`,study_id:'study',user_id:user,study_date:date}),
-    async request(token='test-cron'){
-      const response=await load(routeSource??'src/app/api/cron/finalize/route.ts').GET(new Request('https://local.invalid/api/cron/finalize',{headers:token?{authorization:`Bearer ${token}`}:{}}));
+    solve:(date,difficulty='Gold V',user='alice',study='study')=>state.rows[TABLE.submissions].push({id:`sub-${String(++sequence).padStart(8,'0')}`,study_id:study,user_id:user,solved_at:new Date(date.includes('T')?date:`${date}T12:00:00+09:00`).toISOString(),source:'github',earned_difficulty:difficulty,hamster_problems:{platform:'BOJ',difficulty}}),
+    postpone:(date,user='alice')=>state.rows[TABLE.postponements].push({id:`post-${++sequence}`,study_id:'study',user_id:user,study_date:date,requested_at:`${date}T18:00:00+09:00`}),
+    async request(token='test-cron', method='GET'){
+      const response=await load(routeSource??'src/app/api/cron/finalize/route.ts')[method](new Request('https://local.invalid/api/cron/finalize',{method,headers:token?{authorization:`Bearer ${token}`}:{}}));
       return {status:response.status,body:await response.json()};
     },
   };

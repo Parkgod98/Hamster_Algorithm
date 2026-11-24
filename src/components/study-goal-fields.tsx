@@ -1,11 +1,9 @@
 "use client";
 
 import { useId } from "react";
-import { GOAL_LABELS, type GoalPolicy, type StudyGoal } from "@/lib/study-goals";
+import { GOALS, GOAL_KEYS, GOAL_LABELS, goalInstructions, isManualGoal, withGoalInstructions, type GoalPolicy, type StudyGoal } from "@/lib/study-goals";
 import "./study-goals.css";
 
-const goals = Object.keys(GOAL_LABELS) as StudyGoal[];
-const marks: Record<StudyGoal, string> = { algorithm: "⟨/⟩", english: "Aa", reading: "" };
 
 export function GoalPolicyFields({ value, onChange }: { value: GoalPolicy; onChange: (policy: GoalPolicy) => void }) {
   const group = useId();
@@ -18,12 +16,12 @@ export function GoalPolicyFields({ value, onChange }: { value: GoalPolicy; onCha
   return <div className="goal-policy">
     <fieldset className="goal-picker">
       <legend>허용 목표</legend>
-      <div className="goal-options">{goals.map((goal) => {
+      <div className="goal-options">{GOAL_KEYS.map((goal) => {
         const selected = value.allowed.includes(goal);
         return <label key={goal} className="goal-option">
           <input type="checkbox" checked={selected} disabled={selected && value.allowed.length === 1} onChange={() => toggle(goal)} />
           <span className="goal-tile">
-            <span aria-hidden="true" className={goal === "reading" ? "goal-symbol goal-symbol-book" : "goal-symbol"}>{marks[goal]}</span>
+            <span aria-hidden="true" className="goal-symbol">{GOALS[goal].mark}</span>
             <span>{GOAL_LABELS[goal]}</span>
             <span aria-hidden="true" className="goal-check" />
           </span>
@@ -47,9 +45,9 @@ export function GoalPolicyFields({ value, onChange }: { value: GoalPolicy; onCha
         </label>}
       </>}
     </fieldset>
-    {value.allowed.includes("english") && <label className="goal-english">영어 공부 규칙
-      <textarea rows={3} maxLength={4000} value={value.englishRule} placeholder="예) 매일 고른 영어 콘텐츠로 20분 공부하기"
-        onChange={(event) => onChange({ ...value, englishRule: event.target.value })} />
-    </label>}
+    {value.allowed.filter(isManualGoal).map(goal => <label key={goal} className="goal-english">{GOAL_LABELS[goal]} 규칙
+      <textarea rows={3} maxLength={4000} value={goalInstructions(value, goal)} placeholder={GOALS[goal].example}
+        onChange={event => onChange(withGoalInstructions(value, goal, event.target.value))} />
+    </label>)}
   </div>;
 }

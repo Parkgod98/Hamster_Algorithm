@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { DB } from "@/lib/db";
+import { RPC } from "@/lib/db";
 import { manualProblemExternalId, manualSolvedAt, normalizeManualSubmissionInput } from "@/lib/manual-submission";
 import { shouldSendCompletion } from "@/lib/notification-rules";
 import { rulesForDate } from "@/lib/rule-version";
@@ -20,6 +20,12 @@ export async function POST(request: Request) {
     const input = normalizeManualSubmissionInput(raw);
     const studyId = typeof raw.studyId === "string" ? raw.studyId : "";
     if (!studyId || !input) return NextResponse.json({ error: "플랫폼, 난이도, 문제 수, 인증 날짜를 확인해주세요." }, { status: 400 });
+    if (raw.requestId !== undefined && (typeof raw.requestId !== "string" ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(raw.requestId))) {
+      return NextResponse.json({ error: "등록 번호를 확인한 뒤 다시 시도해주세요." }, { status: 400 });
+    }
+    // Clients loaded before rollout did not send a request ID.
+    const requestId = raw.requestId ?? crypto.randomUUID();
 
     const currentStudyDate = studyDateFromTimestamp(new Date().toISOString());
     if (input.studyDate > currentStudyDate) {
@@ -41,31 +47,18 @@ export async function POST(request: Request) {
 
     const beforeState = notificationStateForProgress(evaluateMemberProgress(progressContext, user.id, currentStudyDate));
 
-    const { data: problem, error: problemError } = await admin
-      .from(DB.problems)
-      .upsert({
-        platform: input.platform,
-        external_id: manualProblemExternalId(input.platform, input.difficulty),
-        title: `${input.difficulty} 수동 인증`,
-        difficulty: input.difficulty,
-      }, { onConflict: "platform,external_id" })
-      .select("id")
-      .single();
-    if (problemError) return NextResponse.json({ error: problemError.message }, { status: 500 });
-
-    const batchId = crypto.randomUUID();
+    const { data: inserted, error } = await admin.rpc(RPC.recordManualBatch, {
+      p_user: user.id, p_study: studyId, p_request: requestId, p_day: input.studyDate,
+      p_platform: input.platform, p_difficulty: input.difficulty, p_count: input.count,
+      p_external_id: manualProblemExternalId(input.platform, input.difficulty),
+    });
+    if (error?.code === "22023") return NextResponse.json({ error: "등록 번호와 인증 내용을 확인해주세요." }, { status: 409 });
+    if (error || typeof inserted !== "boolean") {
+      console.error("manual submission write failed", { code: error?.code ?? "invalid-result" });
+      return NextResponse.json({ error: "저장 여부를 확인할 수 없어요. 같은 내용으로 다시 눌러주세요." }, { status: 503 });
+    }
+    if (!inserted) return NextResponse.json({ ok: true, inserted: input.count, duplicate: true, studyDate: input.studyDate });
     const solvedAt = manualSolvedAt(input.studyDate);
-    const rows = Array.from({ length: input.count }, (_, index) => ({
-      user_id: user.id,
-      study_id: studyId,
-      problem_id: problem.id,
-      solved_at: solvedAt,
-      source: "manual" as const,
-      source_event_id: `manual:${user.id}:${batchId}:${index + 1}`,
-    }));
-
-    const { error } = await admin.from(DB.submissions).insert(rows);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     appendProgressSubmissions(progressContext, user.id, Array.from({ length: input.count }, () => ({
       solvedAt,
@@ -84,7 +77,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, inserted: rows.length, studyDate: input.studyDate });
+    return NextResponse.json({ ok: true, inserted: input.count, studyDate: input.studyDate });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     return NextResponse.json({ error: "unexpected error" }, { status: 500 });

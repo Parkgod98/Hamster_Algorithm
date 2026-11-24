@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo, useRef, type KeyboardEvent } from "react";
 import { useStudyPanel } from "./use-study-panel";
 import type { GrowthReport, PlatformGrowth } from "@/lib/growth-stats";
 import type { Platform } from "@/lib/types";
@@ -58,6 +58,8 @@ export function GrowthStatsSection({
   members: GrowthMember[];
   onSelectUser: (userId: string) => void;
 }) {
+  const widget = useId();
+  const tabs = useRef<HTMLDivElement>(null);
   const key = `growth:${studyId}:${selectedUserId}:${month}`;
   const url = "/api/growth-stats?" + new URLSearchParams({ month, userId: selectedUserId, studyId });
   const result = useStudyPanel<{report: GrowthReport}>(currentUserId, key, url);
@@ -71,14 +73,30 @@ export function GrowthStatsSection({
   const selectedName = selectedMember?.name ?? "스터디원";
   const heading = selectedUserId === currentUserId ? "내 풀이 성장" : `${selectedName}의 풀이 성장`;
 
+  function navigate(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const count = members.length;
+    let next: number;
+    switch (event.key) {
+      case "ArrowRight": next = (index + 1) % count; break;
+      case "ArrowLeft": next = (index + count - 1) % count; break;
+      case "Home": next = 0; break;
+      case "End": next = count - 1; break;
+      default: return;
+    }
+    event.preventDefault();
+    tabs.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+    onSelectUser(members[next].userId);
+  }
+
   return <section className="growth-section">
     <div className="growth-heading">
       <div><p className="eyebrow">SOLUTION GROWTH</p><h3>{heading}</h3><p>같은 스터디원의 풀이량과 난이도 흐름을 함께 봅니다. 난이도 상승을 곧바로 실력 점수로 환산하지 않습니다.</p></div>
     </div>
-    <div className="growth-member-tabs" role="tablist" aria-label="풀이 성장 통계를 볼 스터디원">
-      {members.map((member) => <button
+    <div ref={tabs} className="growth-member-tabs" role="tablist" aria-label="풀이 성장 통계를 볼 스터디원">
+      {members.map((member, index) => <button
         type="button"
-        role="tab"
+        role="tab" id={widget + member.userId} aria-controls={widget + "-panel"}
+        tabIndex={member.userId === selectedUserId ? 0 : -1} onKeyDown={event => navigate(event, index)}
         aria-selected={member.userId === selectedUserId}
         className={`growth-member-tab${member.userId === selectedUserId ? " is-active" : ""}`}
         key={member.userId}
@@ -87,6 +105,7 @@ export function GrowthStatsSection({
         <span>{member.name}</span>{member.userId === currentUserId && <small>나</small>}
       </button>)}
     </div>
+    <div role="tabpanel" id={widget + "-panel"} aria-labelledby={widget + selectedUserId} tabIndex={0} aria-busy={loading}>
     {loading ? <div className="growth-empty">풀이 기록을 집계하는 중…</div> : error ? <div className="growth-empty">{error}</div> : report ? <>
       <div className="growth-kpis">
         <article><span>이번 달 풀이</span><strong>{report.total}<em>문제</em></strong><small>{deltaLabel(report.delta)} · 지난달 {report.previousTotal}문제</small></article>
@@ -137,5 +156,6 @@ export function GrowthStatsSection({
         <p className="growth-footnote">상위 난이도 비중: BOJ Gold 이상 · Programmers Lv.2 이상 · SWEA D4 이상. 플랫폼 간 난이도는 직접 합산하지 않습니다.</p>
       </article>
     </> : null}
+    </div>
   </section>;
 }

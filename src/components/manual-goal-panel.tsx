@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { GOAL_LABELS, type ManualGoal, type StudyGoal } from "@/lib/study-goals";
+import { GOAL_LABELS, goalInstructions, isManualGoal, type ManualGoal, type StudyGoal } from "@/lib/study-goals";
 import type { DayGoals, DayGoalEntry } from "@/lib/day-goals";
 import { browserSupabase } from "@/lib/supabase-browser";
 import { invalidateViews, readView } from "@/lib/view-cache";
@@ -55,7 +55,7 @@ function EntryPhoto({ studyId, entry, viewerId }: { studyId: string; entry: DayG
   </div>;
 }
 
-export function EnglishDayPanel({ viewerId, studyId, date, data, completedGoals = [], onChanged }: Props) {
+export function ManualGoalPanel({ viewerId, studyId, date, data, completedGoals = [], onChanged }: Props) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<ManualGoal | null>(null);
   const [photos, setPhotos] = useState<Partial<Record<ManualGoal, File>>>({});
@@ -80,20 +80,20 @@ export function EnglishDayPanel({ viewerId, studyId, date, data, completedGoals 
 
   if (!data.policy) return null;
   const policy = data.policy;
-  const manualGoals = policy.allowed.filter((goal): goal is ManualGoal => goal !== "algorithm");
+  const manualGoals = policy.allowed.filter(isManualGoal);
   if (!manualGoals.length) return null;
   const completed = new Set([...completedGoals, ...data.entries.filter((item) => item.mine && item.counted).map((item) => item.goal)]);
   const remaining = policy.allowed.filter((goal) => !completed.has(goal));
   const needed = Math.max(0, policy.required - (policy.allowed.length - remaining.length));
   return <section className="day-goals">
     <h3>이날의 목표</h3>
-    <p>{policy.allowed.map((goal) => GOAL_LABELS[goal]).join(" · ")} 중 {policy.required}개 완료</p>
+    <p>인증 기준 {policy.required}개 · 내가 완료한 목표 {policy.allowed.length - remaining.length}개</p>
     {needed > 0 && data.canSubmit && <p>남은 목표 중 {needed}개를 완료해 주세요. {remaining.map((goal) => GOAL_LABELS[goal]).join(" · ")}</p>}
     {manualGoals.map((goal) => {
       const done = data.entries.some((item) => item.mine && item.counted && item.goal === goal);
       return <div key={goal} className="day-goal">
         <h4>{GOAL_LABELS[goal]}</h4>
-        {goal === "english" && policy.englishRule && <p className="goal-instructions">{policy.englishRule}</p>}
+        {goalInstructions(policy, goal) && <p className="goal-instructions">{goalInstructions(policy, goal)}</p>}
         {done ? <p>인증 완료</p> : data.canSubmit && <>
           <label>인증 사진 (선택, 최대 2MB)
             <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {

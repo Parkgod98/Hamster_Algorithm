@@ -23,7 +23,7 @@ export async function GET(request: Request) {
       return communityResponse({ error: "검색어 또는 초대 링크를 확인해 주세요." }, 400);
     }
     const { data, error } = await createAdminClient().rpc(RPC.communityCatalog, {
-      p_actor: actor.id, p_scope: scope, p_query: query, p_code: code, p_offset: offset,
+      p_actor: actor.id, p_scope: scope === "mine" ? "mine-with-requests" : scope, p_query: query, p_code: code, p_offset: offset,
     });
     if (error) return communityError(error);
     const rows = (data ?? []) as CatalogRow[];

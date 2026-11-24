@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { browserSupabase } from "@/lib/supabase-browser";
 import { studyDateFromTimestamp } from "@/lib/study-day";
+import { reportAfterPaint } from "@/lib/action-timing";
 import type { PostponementStatus } from "@/lib/postponement-status";
 
 type Props = {
@@ -32,6 +33,9 @@ export function PostponementControl({ studyId, studyDate, initialStatus, onChang
 
   async function send(write: boolean) {
     if (pending.current) return;
+    const started = performance.now();
+    let token = "";
+    let confirmed = false;
     pending.current = true;
     setBusy(true);
     setMessage("");
@@ -40,6 +44,7 @@ export function PostponementControl({ studyId, studyDate, initialStatus, onChang
     try {
       const { data } = await browserSupabase().auth.getSession();
       const access = data.session?.access_token;
+      token = access ?? "";
       if (!access) {
         setStatus(null);
         setMessage("로그인이 필요해요. 다시 로그인한 뒤 확인해주세요.");
@@ -65,6 +70,7 @@ export function PostponementControl({ studyId, studyDate, initialStatus, onChang
         setMessage(text);
         onMessage(text);
         if (nextStatus) onChanged(nextStatus, new Date().toISOString());
+        confirmed = Boolean(nextStatus?.alreadyPostponed);
       }
     } catch (error) {
       if (abort.signal.aborted) return;
@@ -74,6 +80,7 @@ export function PostponementControl({ studyId, studyDate, initialStatus, onChang
     } finally {
       pending.current = false;
       if (!abort.signal.aborted) setBusy(false);
+      if (write && token && !abort.signal.aborted) reportAfterPaint("postpone", started, token, confirmed);
     }
   }
 

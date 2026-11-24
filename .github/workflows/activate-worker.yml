@@ -1,0 +1,21 @@
+name: Activate promoted study day worker
+on:
+  deployment_status:
+permissions: {}
+jobs:
+  activate:
+    if: github.event.deployment.environment == 'Production' && github.event.deployment_status.state == 'success' && github.event.deployment_status.creator.id == 35613825 && github.event.deployment.creator.id == 35613825
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Confirm the live Vercel build and activate the first open study day
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.deployment.sha }}
+        run: |
+          set -o pipefail
+          curl --silent --show-error --fail-with-body --request POST --max-time 15 \
+            --retry 12 --retry-delay 8 --retry-all-errors --retry-max-time 240 \
+            --header "x-hamster-release-sha: $EXPECTED_SHA" \
+            https://hamsteralgorithm.vercel.app/api/release/activate |
+            jq -e '.ok == true and (.nextDate | type == "string")'

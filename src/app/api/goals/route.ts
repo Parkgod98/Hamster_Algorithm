@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DB, RPC } from "@/lib/db";
+import { isManualGoal } from "@/lib/study-goals";
 import { dayGoals, dayRule } from "@/lib/day-goals";
 import { createAdminClient, requireUser } from "@/lib/supabase";
 
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
     const date = form.get("date");
     const goal = form.get("goal");
     if (typeof studyId !== "string" || !studyId || typeof date !== "string" || !validDate(date)
-        || (goal !== "english" && goal !== "reading")) return json({ error: "스터디와 인증일, 목표를 확인해 주세요." }, 400);
+        || !isManualGoal(goal)) return json({ error: "스터디와 인증일, 목표를 확인해 주세요." }, 400);
     const photo = form.get("photo");
     let bytes: Buffer | null = null;
     let type: string | null = null;

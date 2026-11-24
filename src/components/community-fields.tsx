@@ -39,8 +39,8 @@ export function CommunityFields({ value, onChange, children }: {
               </label>)}
           </div>
         </fieldset>
-        <fieldset className={styles.choiceGroup}>
-          <legend>가입 방식</legend>
+        {value.discoverable && <fieldset className={styles.choiceGroup}>
+          <legend>공개 검색으로 가입할 때</legend>
           <div className={styles.choices}>
             {[{ label: "자유 가입", description: "바로 참여", policy: "open" },
               { label: "승인 후 가입", description: "스터디장이 확인", policy: "approval" }].map((item) =>
@@ -50,7 +50,8 @@ export function CommunityFields({ value, onChange, children }: {
                 <span><strong>{item.label}</strong><small>{item.description}</small></span>
               </label>)}
           </div>
-        </fieldset>
+        </fieldset>}
+        <p className={styles.description}>초대 링크로 신청한 새 멤버는 스터디장이 승인해요.</p>
       </div>
     </section>
   </>;

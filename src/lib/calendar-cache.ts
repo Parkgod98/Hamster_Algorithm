@@ -3,6 +3,7 @@ export type CalendarSnapshot = {
   study: { id: string } | null;
   month: string;
   studyDate: string;
+  readRevision?: string | null;
   todayPostponement?: { canPostpone: boolean; deadlineAt: string | null } | null;
 };
 export type CalendarScope = { viewerId: string; studyId: string; month: string };

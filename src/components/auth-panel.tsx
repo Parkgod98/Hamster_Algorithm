@@ -6,6 +6,7 @@ import { RECOVERY_QUESTIONS } from "@/lib/account";
 import { accountRequest } from "@/lib/account-browser";
 import { browserSupabase, currentAccountId, saveAccountSession } from "@/lib/supabase-browser";
 import { accountDestination } from "@/lib/study-navigation";
+import { rememberRelease } from "@/lib/release-notes";
 import { knownEmptyDirectory, rememberEmptyDirectory } from "@/lib/directory-cache";
 
 type Mode = "login" | "register" | "recover" | "migrate";
@@ -48,7 +49,10 @@ export function AuthPanel({ migration }: { migration?: { userId: string; nicknam
           if (activeUser && activeUser !== migration.userId) return;
         }
         saveAccountSession(result.token,result.userId);
-        if (action === "register") rememberEmptyDirectory(result.userId);
+        if (action === "register") {
+          rememberRelease(result.userId);
+          rememberEmptyDirectory(result.userId);
+        }
         router.replace(accountDestination(action === "register", knownEmptyDirectory(result.userId)));
       }
     } catch (error) { setMessage(error instanceof Error ? error.message : "다시 시도해주세요."); }

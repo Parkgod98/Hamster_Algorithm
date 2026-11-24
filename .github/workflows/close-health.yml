@@ -1,0 +1,19 @@
+name: Study day close monitor
+on:
+  workflow_dispatch:
+  schedule:
+    # 05:06 and 05:16 KST after the allowance, 09:26 after the backup worker.
+    - cron: '6,16 20 * * *'
+    - cron: '26 0 * * *'
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check the production close independently of Vercel Cron
+        shell: bash
+        run: |
+          set -o pipefail
+          curl --silent --show-error --fail-with-body --max-time 20 --retry 1 https://hamsteralgorithm.vercel.app/api/health |
+            tee /dev/stderr | jq -e '.ok == true and (.expected | type == "string")'

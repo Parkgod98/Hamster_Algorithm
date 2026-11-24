@@ -1,5 +1,7 @@
 "use client";
 
+import { ReleaseNotice } from "./release-notice";
+
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -78,7 +80,7 @@ function CreateStudy({ viewerId, onDismiss }: { viewerId: string; onDismiss: () 
           </label>
         </CommunityFields> : <>
           <div className={styles.reviewLine}>
-            <strong>{name}</strong><span>{options.discoverable ? "검색 공개" : "비공개"} · {options.joinPolicy === "open" ? "자유 가입" : "승인 후 가입"}</span>
+            <strong>{name}</strong><span>{options.discoverable ? "검색 공개" : "비공개"} · {options.discoverable && options.joinPolicy === "open" ? "자유 가입" : "승인 후 가입"}</span>
           </div>
           <GoalPolicyFields value={goals} onChange={setGoals} />
         </>}
@@ -142,6 +144,10 @@ function StudyDirectory({ viewerId, scope, onSearch, onCreate }: { viewerId: str
   const [joinError, setJoinError] = useState("");
   const sameResult = result?.key === resultKey;
   const studies = sameResult ? result.list.studies : [];
+  const groups = scope === "mine"
+    ? [{ key: "joined", items: studies.filter(study => study.memberRole) },
+       { key: "pending", items: studies.filter(study => !study.memberRole && study.pending) }]
+    : [{ key: "search", items: studies }];
   const more = sameResult ? result.list.nextOffset : null;
   const busy = !loadError && (!sameResult || result.offset !== page.offset);
   useEffect(() => {
@@ -218,6 +224,7 @@ function StudyDirectory({ viewerId, scope, onSearch, onCreate }: { viewerId: str
   }
 
   return <>
+    {result && <ReleaseNotice accountId={viewerId} />}
     {scope === "search" && <>
       <form role="search" className={styles.find} onSubmit={(event) => { event.preventDefault(); search(input); }}>
         <span className={styles.magnifier} aria-hidden="true" />
@@ -229,19 +236,21 @@ function StudyDirectory({ viewerId, scope, onSearch, onCreate }: { viewerId: str
     </>}
     <section className={styles.results} aria-labelledby="directory-heading">
       <div className={styles.resultHeading}>
-        <h2 id="directory-heading">{scope === "mine" ? "참여 중인 스터디" : query ? "검색 결과" : "공개 스터디"}</h2>
+        <h2 id="directory-heading">{scope === "mine" ? "참여·신청 현황" : query ? "검색 결과" : "공개 스터디"}</h2>
         {!busy && !loadError && <span>{studies.length}{more !== null ? "+" : ""}개</span>}
       </div>
-      {!!studies.length && <div className={styles.grid}>{studies.map((study) => {
-        const pending = study.pending && !study.memberRole && study.joinPolicy === "approval";
-        return <StudyCard key={study.id} study={study}>
-          <button className={styles.cardButton} disabled={Boolean(joining) || pending}
-            onClick={() => void join(study)}>
-            {joining === study.id ? "처리 중…" : study.memberRole ? "스터디 열기" : pending ? "승인 대기 중"
-              : study.joinPolicy === "open" ? "바로 가입" : "가입 신청"}
-          </button>
-        </StudyCard>;
-      })}</div>}
+      {groups.map(group => group.items.length > 0 && <div key={group.key}>
+        {scope === "mine" && <h3>{group.key === "pending" ? "승인 대기 중" : "참여 중"}</h3>}
+        <div className={styles.grid}>{group.items.map(study => {
+          const pending = study.pending && !study.memberRole && (scope === "mine" || study.joinPolicy === "approval");
+          return <StudyCard key={study.id} study={study}>
+            <button className={styles.cardButton} disabled={Boolean(joining) || pending} onClick={() => void join(study)}>
+              {joining === study.id ? "처리 중…" : study.memberRole ? "스터디 열기" : pending ? "승인 대기 중"
+                : study.joinPolicy === "open" ? "바로 가입" : "가입 신청"}
+            </button>
+          </StudyCard>;
+        })}</div>
+      </div>)}
       {joinError && <p role="alert" className={styles.error}>{joinError}</p>}
       {loadError && <div role="alert" className={styles.empty}><p>{loadError}</p>
         <button className={styles.secondary} onClick={() => setPage({ ...page, retry: page.retry + 1 })}>다시 조회</button></div>}
