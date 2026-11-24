@@ -7,6 +7,17 @@ import { checkDeployment } from "./check-deployment.mjs";
 
 const baseline = "202611230008";
 const directory = new URL("../supabase/migrations/", import.meta.url);
+class ReleaseError extends Error {}
+
+// Driver messages may include connection strings, SQL, and authentication details.
+const connectionCodes = new Set([
+  "CONNECT_TIMEOUT", "CONNECTION_CLOSED", "CONNECTION_DESTROYED", "CONNECTION_ENDED",
+  "EAI_AGAIN", "ENOTFOUND", "ENETUNREACH", "EHOSTUNREACH", "ETIMEDOUT", "EPIPE",
+  "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "EADDRNOTAVAIL", "SASL_SIGNATURE_MISMATCH",
+  "SELF_SIGNED_CERT_IN_CHAIN", "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "ERR_TLS_CERT_ALTNAME_INVALID", "CERT_NOT_YET_VALID", "CERT_HAS_EXPIRED", "CERT_REVOKED",
+]);
 
 export async function releaseMigrations() {
   const files = (await readdir(directory)).filter(file => /^\d{12}_[a-z\d_]+\.sql$/.test(file) && file.slice(0,12) > baseline).sort();
@@ -19,7 +30,7 @@ export async function releaseMigrations() {
 function appliedPrefix(rows, migrations) {
   for (const [i, row] of rows.entries()) {
     if (row.file !== migrations[i]?.file || row.checksum !== migrations[i]?.checksum) {
-      throw new Error("Migration history differs from this release. Inspect the deployment before retrying.");
+      throw new ReleaseError("Migration history differs from this release. Inspect the deployment before retrying.");
     }
   }
   return rows.length;
@@ -34,7 +45,7 @@ export async function migrateRelease(transaction, migrations) {
       and to_regprocedure('public.hamster_record_github_solutions(uuid,text,jsonb,text)') is not null
       and to_regclass('public.hamster_account_sessions') is not null
       and to_regclass('public.hamster_study_rule_versions') is not null as present`);
-    if (!previous.present) throw new Error("Existing hamster schema through 202611230008 is required.");
+    if (!previous.present) throw new ReleaseError("Existing hamster schema through 202611230008 is required.");
     await db.exec(`create table if not exists public.hamster_schema_releases (
       file text primary key, checksum text not null, applied_at timestamptz not null default clock_timestamp()
     );
@@ -50,7 +61,7 @@ export async function migrateRelease(transaction, migrations) {
           [migration.file, migration.checksum]);
       } catch (error) {
         // Database driver errors can carry SQL and connection details.
-        throw new Error("Migration failed at " + migration.file + " (" + safeCode(error) + ").");
+        throw new ReleaseError("Migration failed at " + migration.file + " (" + safeCode(error) + ").");
       }
     }
     if (missing.length) await db.exec("notify pgrst, 'reload schema'");
@@ -59,7 +70,15 @@ export async function migrateRelease(transaction, migrations) {
 }
 
 function safeCode(error) {
-  return typeof error?.code === "string" && /^[A-Z\d_]{1,24}$/.test(error.code) ? error.code : "DB_ERROR";
+  const code = error?.code;
+  return typeof code === "string" && (/^[0-9A-Z]{5}$/.test(code) || connectionCodes.has(code))
+    ? code : "DB_ERROR";
+}
+
+export function migrationFailure(error, transactionStarted) {
+  if (error instanceof ReleaseError) return error;
+  const stage = transactionStarted ? "transaction" : "connection";
+  return new Error("Database migration " + stage + " failed (" + safeCode(error) + ").");
 }
 
 function apiUrl(env) {
@@ -98,16 +117,21 @@ export function migrationTarget(env, local = false) {
 
 async function applyToDatabase(url, migrations, ssl) {
   const {default: postgres} = await import("postgres");
-  const sql = postgres(url.href, {ssl, max: 1, prepare: false, connect_timeout: 10, onnotice: () => {}});
+  let transactionStarted = false;
   try {
-    return await migrateRelease(fn => sql.begin(tx => fn({
-      query: (statement, values = []) => tx.unsafe(statement, values),
-      exec: statement => tx.unsafe(statement).simple(),
-    })), migrations);
+    const sql = postgres(url.href, {ssl, max: 1, prepare: false, connect_timeout: 10, onnotice: () => {}});
+    try {
+      return await migrateRelease(fn => sql.begin(tx => {
+        transactionStarted = true;
+        return fn({
+          query: (statement, values = []) => tx.unsafe(statement, values),
+          exec: statement => tx.unsafe(statement).simple(),
+        });
+      }), migrations);
+    } finally { await sql.end({timeout: 5}); }
   } catch (error) {
-    if (error.name === "Error" && /^(Migration |Existing hamster)/.test(error.message)) throw error;
-    throw new Error("Database migration connection or transaction failed (" + safeCode(error) + ").");
-  } finally { await sql.end({timeout: 5}); }
+    throw migrationFailure(error, transactionStarted);
+  }
 }
 
 async function alreadyInstalled(env, migrations, request) {
