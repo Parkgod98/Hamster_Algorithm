@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
+import { requiresReleaseNote } from "./requires-release-note.mjs";
 
 const allowedTypes = ["feat", "fix", "docs", "refactor", "test", "chore", "ci"];
 const typePattern = allowedTypes.join("|");
@@ -33,8 +34,12 @@ if (pr) {
   for (const message of messages) if (!commitPattern.test(message)) errors.push(`커밋 메시지 '${message}' 형식 오류`);
   const file = "src/lib/release-note-content.json";
   const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
-  const changed = git("diff", "--name-only", `${pr.base.sha}...${pr.head.sha}`).split("\n");
-  if (changed.some(path => /^(src\/|public\/|supabase\/migrations\/)/.test(path))) {
+  const changes = git("diff", "--name-status", "--no-renames", `${pr.base.sha}...${pr.head.sha}`).split("\n");
+  const readSql = path => git("show", `${pr.head.sha}:${path}`);
+  if (changes.some(line => {
+    const [status, path] = line.split("\t");
+    return path && requiresReleaseNote(status, path, readSql);
+  })) {
     const previous = git("ls-tree", "--name-only", pr.base.sha, "--", file)
       ? JSON.parse(git("show", `${pr.base.sha}:${file}`)) : null;
     const note = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
