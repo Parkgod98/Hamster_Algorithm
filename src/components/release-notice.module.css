@@ -19,6 +19,7 @@
 .notice::backdrop { background: #25221f70; }
 .content { padding: clamp(20px, 6vw, 32px); }
 .content h2 { margin: 14px 0 20px; font-size: 1.45rem; line-height: 1.35; letter-spacing: -.045em; }
+.content h2:focus { outline: none; }
 .content ul { list-style: none; margin: 0 0 22px; padding: 0; }
 .content li + li { border-top: 1px solid var(--line); padding-top: 13px; margin-top: 13px; }
 .content li strong { font-size: 1rem; }
